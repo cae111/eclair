@@ -21,6 +21,7 @@ import fr.acinq.bitcoin.scalacompat.Satoshi
 import fr.acinq.eclair.api.Service
 import fr.acinq.eclair.api.directives.EclairDirectives
 import fr.acinq.eclair.api.serde.FormParamExtractors._
+import fr.acinq.eclair.blockchain.fee.FeeratePerByte
 
 trait OnChain {
   this: Service with EclairDirectives =>
@@ -38,6 +39,13 @@ trait OnChain {
     }
   }
 
+  val cpfpBumpFees: Route = postRequest("cpfpbumpfees") { implicit t =>
+    formFields("targetFeerateSatByte".as[FeeratePerByte], outPointsFormParam) {
+      (targetFeerate, outPoints) =>
+        complete(eclairApi.cpfpBumpFees(targetFeerate, outPoints.toSet))
+    }
+  }
+
   val onChainBalance: Route = postRequest("onchainbalance") { implicit t =>
     complete(eclairApi.onChainBalance())
   }
@@ -52,6 +60,6 @@ trait OnChain {
     complete(eclairApi.globalBalance())
   }
 
-  val onChainRoutes: Route = getNewAddress ~ sendOnChain ~ onChainBalance ~ onChainTransactions ~ globalBalance
+  val onChainRoutes: Route = getNewAddress ~ sendOnChain ~ cpfpBumpFees ~ onChainBalance ~ onChainTransactions ~ globalBalance
 
 }
