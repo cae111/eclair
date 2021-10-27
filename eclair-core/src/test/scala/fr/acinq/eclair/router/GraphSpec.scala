@@ -27,6 +27,8 @@ import fr.acinq.eclair.{BlockHeight, MilliSatoshiLong, ShortChannelId}
 import org.scalatest.funsuite.AnyFunSuite
 import scodec.bits._
 
+import scala.concurrent.duration.DurationInt
+
 class GraphSpec extends AnyFunSuite {
 
   val (a, b, c, d, e, f, g, h) = (
@@ -168,8 +170,8 @@ class GraphSpec extends AnyFunSuite {
 
     val bIncoming = graph.getIncomingEdgesOf(b)
     assert(bIncoming.size == 1)
-    assert(bIncoming.exists(_.desc.a == a)) // there should be an edge a --> b
-    assert(bIncoming.exists(_.desc.b == b))
+    assert(bIncoming(a).exists(_.desc.a == a)) // there should be an edge a --> b
+    assert(bIncoming(a).exists(_.desc.b == b))
 
     val bOutgoing = graph.edgesOf(b)
     assert(bOutgoing.size == 1)
@@ -221,18 +223,18 @@ class GraphSpec extends AnyFunSuite {
     val graph = DirectedGraph(Seq(edgeAB, edgeAD, edgeBC, edgeDC))
 
     assert(graph.edgesOf(a).toSet == Set(edgeAB, edgeAD))
-    assert(graph.getIncomingEdgesOf(a) == Nil)
+    assert(graph.getIncomingEdgesOf(a).isEmpty)
     assert(graph.edgesOf(c) == Nil)
-    assert(graph.getIncomingEdgesOf(c).toSet == Set(edgeBC, edgeDC))
+    assert(graph.getIncomingEdgesOf(c).values.flatten.toSet == Set(edgeBC, edgeDC))
 
     val edgeAB1 = edgeAB.copy(balance_opt = Some(200000 msat))
     val edgeBC1 = edgeBC.copy(balance_opt = Some(150000 msat))
     val graph1 = graph.addEdge(edgeAB1).addEdge(edgeBC1)
 
     assert(graph1.edgesOf(a).toSet == Set(edgeAB1, edgeAD))
-    assert(graph1.getIncomingEdgesOf(a) == Nil)
+    assert(graph1.getIncomingEdgesOf(a).isEmpty)
     assert(graph1.edgesOf(c) == Nil)
-    assert(graph1.getIncomingEdgesOf(c).toSet == Set(edgeBC1, edgeDC))
+    assert(graph1.getIncomingEdgesOf(c).values.flatten.toSet == Set(edgeBC1, edgeDC))
   }
 
   def descFromNodes(shortChannelId: Long, a: PublicKey, b: PublicKey): ChannelDesc = makeEdge(shortChannelId, a, b, 0 msat, 0).desc
@@ -256,9 +258,9 @@ class GraphSpec extends AnyFunSuite {
     val edgeDE = makeEdge(6L, d, e, 9 msat, 0, capacity = 200000 sat)
     val graph = DirectedGraph(Seq(edgeAB, edgeBC, edgeCD, edgeDC, edgeCE, edgeDE))
 
-    val path :: Nil = yenKshortestPaths(graph, a, e, 100000000 msat,
+    val path :: Nil = yenKshortestPaths(GraphWithBalanceEstimates(graph, 1 day), a, e, 100000000 msat,
       Set.empty, Set.empty, Set.empty, 1,
-      Right(HeuristicsConstants(1.0E-8, RelayFees(2000 msat, 500), RelayFees(50 msat, 20), useLogProbability = true)),
+      Right(HeuristicsConstants(1.0E-8, RelayFees(2000 msat, 500), RelayFees(50 msat, 20), useLogProbability = true, usePastRelaysData = false)),
       BlockHeight(714930), _ => true, includeLocalChannelCost = true)
     assert(path.path == Seq(edgeAB, edgeBC, edgeCE))
   }
@@ -280,7 +282,7 @@ class GraphSpec extends AnyFunSuite {
     val edgeDE = makeEdge(6L, d, e, 1 msat, 0, capacity = 200000 sat)
     val graph = DirectedGraph(Seq(edgeAB, edgeBC, edgeCD, edgeDC, edgeCE, edgeDE))
 
-    val paths = yenKshortestPaths(graph, a, e, 90000000 msat,
+    val paths = yenKshortestPaths(GraphWithBalanceEstimates(graph, 1 day), a, e, 90000000 msat,
       Set.empty, Set.empty, Set.empty, 2,
       Left(WeightRatios(1, 0, 0, 0, RelayFees(0 msat, 0))),
       BlockHeight(714930), _ => true, includeLocalChannelCost = true)
@@ -306,7 +308,7 @@ class GraphSpec extends AnyFunSuite {
     val edgeDE = makeEdge(6L, d, e, 1 msat, 0, capacity = 200000 sat)
     val graph = DirectedGraph(Seq(edgeAB, edgeBC, edgeCD, edgeDC, edgeCE, edgeDE))
 
-    val paths = yenKshortestPaths(graph, a, e, 90000000 msat,
+    val paths = yenKshortestPaths(GraphWithBalanceEstimates(graph, 1 day), a, e, 90000000 msat,
       Set.empty, Set.empty, Set.empty, 2,
       Left(WeightRatios(1, 0, 0, 0, RelayFees(0 msat, 0))),
       BlockHeight(714930), _ => true, includeLocalChannelCost = true)
@@ -339,7 +341,7 @@ class GraphSpec extends AnyFunSuite {
     val edgeGH = makeEdge(9L, g, h, 2 msat, 0, capacity = 100000 sat, minHtlc = 1000 msat)
     val graph = DirectedGraph(Seq(edgeCD, edgeDF, edgeCE, edgeED, edgeEF, edgeFG, edgeFH, edgeEG, edgeGH))
 
-    val paths = yenKshortestPaths(graph, c, h, 10000000 msat,
+    val paths = yenKshortestPaths(GraphWithBalanceEstimates(graph, 1 day), c, h, 10000000 msat,
       Set.empty, Set.empty, Set.empty, 3,
       Left(WeightRatios(1, 0, 0, 0, RelayFees(0 msat, 0))),
       BlockHeight(714930), _ => true, includeLocalChannelCost = true)
