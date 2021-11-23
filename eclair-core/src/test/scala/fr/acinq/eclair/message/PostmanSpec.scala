@@ -24,7 +24,7 @@ import fr.acinq.eclair.io.MessageRelay.{Disconnected, Sent}
 import fr.acinq.eclair.io.Switchboard.RelayMessage
 import fr.acinq.eclair.message.OnionMessages.{BlindedPath, ReceiveMessage, Recipient, buildMessage}
 import fr.acinq.eclair.message.Postman._
-import fr.acinq.eclair.wire.protocol.{GenericTlv, OnionMessagePayloadTlv, TlvStream}
+import fr.acinq.eclair.wire.protocol.{GenericTlv, TlvStream}
 import fr.acinq.eclair.{UInt64, randomKey}
 import org.scalatest.Outcome
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike

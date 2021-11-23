@@ -32,7 +32,9 @@ import scala.util.Try
 
 object OnionMessages {
 
-  case class OnionMessageConfig(relayPolicy: RelayPolicy, timeout: FiniteDuration)
+  case class OnionMessageConfig(relayPolicy: RelayPolicy,
+                                timeout: FiniteDuration,
+                                maxAttempts: Int)
 
   case class IntermediateNode(nodeId: PublicKey, padding: Option[ByteVector] = None)
 
