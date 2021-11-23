@@ -22,6 +22,7 @@ import fr.acinq.eclair.crypto.Sphinx.RouteBlinding.{BlindedNode, BlindedRoute}
 import fr.acinq.eclair.payment.Bolt12Invoice
 import fr.acinq.eclair.wire.protocol.OnionRoutingCodecs.{ForbiddenTlv, InvalidTlvPayload, MissingRequiredTlv}
 import fr.acinq.eclair.wire.protocol.TlvCodecs.tlvField
+import fr.acinq.eclair.wire.protocol.TlvCodecs.tlvStream
 import scodec.bits.ByteVector
 
 /** Tlv types used inside the onion of an [[OnionMessage]]. */
@@ -90,7 +91,7 @@ object MessageOnion {
   /** Per-hop payload for a final node. */
   case class FinalPayload(records: TlvStream[OnionMessagePayloadTlv], blindedRecords: TlvStream[RouteBlindingEncryptedDataTlv]) extends PerHopPayload {
     val pathId_opt: Option[ByteVector] = blindedRecords.get[RouteBlindingEncryptedDataTlv.PathId].map(_.data)
-    val replyPath_opt: Option[ReplyPath] = records.get[ReplyPath]
+    val replyPath_opt: Option[BlindedRoute] = records.get[ReplyPath].map(_.blindedRoute)
     val invoiceRequest_opt: Option[OfferTypes.InvoiceRequest] = records.get[InvoiceRequest].map(_.tlvs).map(OfferTypes.InvoiceRequest(_))
     val invoice_opt: Option[Bolt12Invoice] = records.get[Invoice].map(_.tlvs).map(Bolt12Invoice(_))
     val invoiceError_opt: Option[OfferTypes.InvoiceError] = records.get[InvoiceError].map(_.tlvs).map(OfferTypes.InvoiceError(_))
@@ -139,7 +140,9 @@ object MessageOnionCodecs {
     .typecase(UInt64(66), tlvField(OfferCodecs.invoiceTlvCodec.as[Invoice]))
     .typecase(UInt64(68), tlvField(OfferCodecs.invoiceErrorTlvCodec.as[InvoiceError]))
 
-  val perHopPayloadCodec: Codec[TlvStream[OnionMessagePayloadTlv]] = TlvCodecs.lengthPrefixedTlvStream[OnionMessagePayloadTlv](onionTlvCodec).complete
+  val perHopPayloadCodec: Codec[TlvStream[OnionMessagePayloadTlv]] = TlvCodecs.tlvStream[OnionMessagePayloadTlv](onionTlvCodec).complete
+
+  val prefixedPerHopPayloadCodec: Codec[TlvStream[OnionMessagePayloadTlv]] = variableSizeBytesLong(CommonCodecs.varintoverflow, perHopPayloadCodec)
 
   val messageOnionPacketCodec: Codec[OnionRoutingPacket] = variableSizeBytes(uint16, bytes).exmap[OnionRoutingPacket](
     // The Sphinx packet header contains a version (1 byte), a public key (33 bytes) and a mac (32 bytes) -> total 66 bytes
