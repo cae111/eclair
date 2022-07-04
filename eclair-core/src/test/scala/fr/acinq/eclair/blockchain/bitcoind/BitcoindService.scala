@@ -85,6 +85,7 @@ trait BitcoindService extends Logging {
           .appendedAll(defaultAddressType_opt.map(addressType => s"changetype=$addressType\n").getOrElse(""))
           .appendedAll(mempoolSize_opt.map(mempoolSize => s"maxmempool=$mempoolSize\n").getOrElse(""))
           .appendedAll(mempoolMinFeerate_opt.map(mempoolMinFeerate => s"minrelaytxfee=${FeeratePerKB(mempoolMinFeerate).feerate.toBtc.toBigDecimal}\n").getOrElse(""))
+          .appendedAll(s"signer=${new File(sys.props("user.dir"), "eclair-hwi.sh").getAbsolutePath}")
         if (useCookie) {
           defaultConf
             .replace("rpcuser=foo", "")

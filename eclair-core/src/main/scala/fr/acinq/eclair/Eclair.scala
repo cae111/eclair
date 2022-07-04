@@ -23,7 +23,9 @@ import akka.actor.typed.scaladsl.adapter.{ClassicActorRefOps, ClassicSchedulerOp
 import akka.pattern._
 import akka.util.Timeout
 import com.softwaremill.quicklens.ModifyPimp
+import fr.acinq.bitcoin.psbt.Psbt
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
+import fr.acinq.bitcoin.scalacompat.DeterministicWallet.{ExtendedPublicKey, KeyPath}
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, ByteVector64, Crypto, Satoshi}
 import fr.acinq.eclair.ApiTypes.ChannelNotFound
 import fr.acinq.eclair.balance.CheckBalance.GlobalBalance
@@ -163,6 +165,12 @@ trait Eclair {
   def verifyMessage(message: ByteVector, recoverableSignature: ByteVector): VerifiedMessage
 
   def sendOnionMessage(intermediateNodes: Seq[PublicKey], destination: Either[PublicKey, Sphinx.RouteBlinding.BlindedRoute], replyPath: Option[Seq[PublicKey]], userCustomContent: ByteVector)(implicit timeout: Timeout): Future[SendOnionMessageResponse]
+
+  def getOnchainMasterPubKey: ExtendedPublicKey
+
+  def getDescriptors(fingerprint: Int, chain_opt: Option[String], account: Long): (List[String], List[String])
+
+  def signPsbt(psbt: Psbt, fingerprint: Int, chain_opt: Option[String]): Psbt
 
   def stop(): Future[Unit]
 }
@@ -581,6 +589,12 @@ class EclairImpl(appKit: Kit) extends Eclair with Logging {
       case Attempt.Failure(cause) => Future.successful(SendOnionMessageResponse(sent = false, failureMessage = Some(s"the `content` field is invalid, it must contain encoded tlvs: ${cause.message}"), response = None))
     }
   }
+
+  override def getOnchainMasterPubKey: ExtendedPublicKey = this.appKit.nodeParams.channelKeyManager.getOnchainAccountPubKey(KeyPath(""))
+
+  override def signPsbt(psbt: Psbt, fingerprint: Int, chain_opt: Option[String]): Psbt = this.appKit.nodeParams.channelKeyManager.signPsbt(psbt, fingerprint, chain_opt)
+
+  override def getDescriptors(fingerprint: Int, chain_opt: Option[String], account: Long): (List[String], List[String]) = this.appKit.nodeParams.channelKeyManager.getDescriptors(fingerprint, chain_opt, account)
 
   override def stop(): Future[Unit] = {
     // README: do not make this smarter or more complex !
