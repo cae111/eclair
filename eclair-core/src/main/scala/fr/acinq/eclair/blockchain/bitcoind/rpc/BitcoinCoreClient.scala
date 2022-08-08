@@ -16,9 +16,10 @@
 
 package fr.acinq.eclair.blockchain.bitcoind.rpc
 
+import fr.acinq.bitcoin
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
 import fr.acinq.bitcoin.scalacompat._
-import fr.acinq.bitcoin.{Bech32, Block}
+import fr.acinq.bitcoin.{Bech32, Block, BlockHeader}
 import fr.acinq.eclair.ShortChannelId.coordinates
 import fr.acinq.eclair.blockchain.OnChainWallet
 import fr.acinq.eclair.blockchain.OnChainWallet.{FundTransactionResponse, MakeFundingTxResponse, OnChainBalance, SignTransactionResponse}
@@ -28,10 +29,12 @@ import fr.acinq.eclair.transactions.Transactions
 import fr.acinq.eclair.wire.protocol.ChannelAnnouncement
 import fr.acinq.eclair.{BlockHeight, TimestampSecond, TxCoordinates}
 import grizzled.slf4j.Logging
+import kotlin.Pair
 import org.json4s.Formats
 import org.json4s.JsonAST._
 import scodec.bits.ByteVector
 
+import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters.ListHasAsScala
 import scala.util.{Failure, Success, Try}
@@ -73,6 +76,55 @@ class BitcoinCoreClient(val rpcClient: BitcoinJsonRPCClient) extends OnChainWall
       .recover {
         case t: JsonRPCError if t.error.code == -5 => None // Invalid or non-wallet transaction id (code: -5)
       }
+
+  def getTxConfirmationProof(txid: ByteVector32)(implicit ec: ExecutionContext): Future[List[BlockHeaderInfo]] = {
+    import KotlinUtils._
+
+    /**
+     * Scala wrapper for Block.verifyTxOutProof
+     * @param proof tx output proof, as provided by bitcoind
+     * @return a (Header, List(txhash, position)) tuple
+     */
+    def verifyTxOutProof(proof: ByteVector): (BlockHeader, List[(ByteVector32, Int)]) = {
+      val check = Block.verifyTxOutProof(proof.toArray)
+      (check.getFirst, check.getSecond.asScala.toList.map(p => (kmp2scala(p.getFirst), p.getSecond.intValue())))
+    }
+
+    for {
+      confirmations_opt <- getTxConfirmations(txid)
+      if (confirmations_opt.isDefined && confirmations_opt.get > 0)
+      // get the merkle proof for our txid
+      proof <- getTxOutProof(txid)
+      // verify this merkle proof. if valid, we get the header for the block the tx was published in, and the tx hashes
+      // that can be used to rebuild the block's merkle root
+      (header, txHashesAndPos) = verifyTxOutProof(proof)
+      // inclusionData contains a header and a list of (txid, position) that can be used to re-build the header's merkle root
+      // check that the block hash included in the proof matches the block in which the tx was published
+      Some(blockHash) <- getTxBlockHash(txid)
+      _ = require(header.blockId.contentEquals(blockHash.toArray), "confirmation proof is not valid (block id mismatch)")
+      // check that our txid is included in the merkle root of the block it was published in
+      txids = txHashesAndPos.map { case (txhash, _) => txhash.reverse }
+      _ = require(txids.contains(txid), "confirmation proof is not valid (txid not found)")
+      // get the block in which our tx was confirmed and all following blocks
+      headerInfos <- getBlockInfos(blockHash, confirmations_opt.get)
+      _ = require(headerInfos.head.header.blockId.contentEquals(blockHash.toArray), "block header id mismatch")
+      _ = require(headerInfos.forall(hi => BlockHeader.checkProofOfWork(hi.header)), "header's proof of work is not valid")
+    } yield headerInfos
+  }
+
+  def getTxOutProof(txid: ByteVector32)(implicit ec: ExecutionContext): Future[ByteVector] =
+    rpcClient.invoke("gettxoutproof", Array(txid)).collect { case JString(raw) => ByteVector.fromValidHex(raw) }
+
+  // returns a chain a blocks of a given size starting at `blockId`
+  def getBlockInfos(blockId: ByteVector32, count: Int)(implicit ec: ExecutionContext): Future[List[BlockHeaderInfo]] = {
+    import KotlinUtils._
+
+    def loop(blocks: List[BlockHeaderInfo]): Future[List[BlockHeaderInfo]] = if (blocks.size == count) Future.successful(blocks) else {
+      getBlockHeaderInfo(blocks.last.nextBlockHash.get.reverse).flatMap(info => loop(blocks :+ info))
+    }
+
+    getBlockHeaderInfo(blockId).flatMap(info => loop(List(info)))
+  }
 
   /** Get the hash of the block containing a given transaction. */
   private def getTxBlockHash(txid: ByteVector32)(implicit ec: ExecutionContext): Future[Option[ByteVector32]] =
@@ -205,6 +257,32 @@ class BitcoinCoreClient(val rpcClient: BitcoinJsonRPCClient) extends OnChainWall
       WalletTx(address, toSatoshi(amount), fee, blockHash, confirmations.toLong, ByteVector32.fromValidHex(txid), timestamp.toLong)
     }).reverse
     case _ => Nil
+  }
+
+  //------------------------- BLOCKS  -------------------------//
+  def getBlockHash(height: Int)(implicit ec: ExecutionContext): Future[ByteVector32] = {
+    rpcClient.invoke("getblockhash", height).map(json => {
+      val JString(hash) = json
+      ByteVector32.fromValidHex(hash)
+    })
+  }
+
+  def getBlockHeaderInfo(blockId: ByteVector32)(implicit ec: ExecutionContext): Future[BlockHeaderInfo] = {
+    import fr.acinq.bitcoin.{ByteVector32 => ByteVector32Kt}
+    rpcClient.invoke("getblockheader", blockId.toString()).map(json => {
+      val JInt(confirmations) = json \ "confirmations"
+      val JInt(height) = json \ "height"
+      val JInt(time) = json \ "time"
+      val JInt(version) = json \ "version"
+      val JInt(nonce) = json \ "nonce"
+      val JString(bits) = json \ "bits"
+      val merkleRoot = ByteVector32Kt.fromValidHex((json \ "merkleroot").extract[String]).reversed()
+      val previousblockhash = ByteVector32Kt.fromValidHex((json \ "previousblockhash").extract[String]).reversed()
+      val nextblockhash = (json \ "nextblockhash").extractOpt[String].map(h => ByteVector32.fromValidHex(h).reverse)
+      val header = new BlockHeader(version.longValue, previousblockhash, merkleRoot, time.longValue, java.lang.Long.parseLong(bits, 16), nonce.longValue)
+      require(header.blockId == KotlinUtils.scala2kmp(blockId))
+      BlockHeaderInfo(header, confirmations.toLong, height.toLong, nextblockhash)
+    })
   }
 
   //------------------------- FUNDING  -------------------------//
@@ -510,6 +588,10 @@ object BitcoinCoreClient {
   case class UnlockOutpoint(txid: ByteVector32, vout: Long)
 
   case class Utxo(txid: ByteVector32, amount: MilliBtc, confirmations: Long, safe: Boolean, label_opt: Option[String])
+
+  case class TransactionInfo(tx: Transaction, confirmations: Int, blockId: Option[ByteVector32])
+
+  case class BlockHeaderInfo(header: BlockHeader, confirmation: Long, height: Long, nextBlockHash: Option[ByteVector32])
 
   def toSatoshi(btcAmount: BigDecimal): Satoshi = Satoshi(btcAmount.bigDecimal.scaleByPowerOfTen(8).longValue)
 

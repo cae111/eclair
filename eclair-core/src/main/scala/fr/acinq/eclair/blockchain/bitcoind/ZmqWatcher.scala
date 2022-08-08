@@ -401,20 +401,32 @@ private class ZmqWatcher(nodeParams: NodeParams, blockHeight: AtomicLong, client
 
   def checkConfirmed(w: WatchConfirmed[_ <: WatchConfirmedTriggered]): Future[Unit] = {
     log.debug("checking confirmations of txid={}", w.txId)
+
+    def checkConfirmationProof(): Future[Unit] = {
+      println(s"checking checkConfirmationProof for ${w.txId}")
+      client.getTxConfirmationProof(w.txId).map(headerInfos => {
+        require(headerInfos.forall(hi => fr.acinq.bitcoin.BlockHeader.checkProofOfWork(hi.header)), s"invalid proof of work for txid=${w.txId}")
+        // FIXME: this should not be hardcoded. 0x1715a35c  is the difficulty of block 600000
+        if (nodeParams.chainHash == Block.LivenetGenesisBlock.hash) require(headerInfos.forall(hi => hi.header.bits < 0x1715a35c))
+      })
+    }
+
     // NB: this is very inefficient since internally we call `getrawtransaction` three times, but it doesn't really
     // matter because this only happens once, when the watched transaction has reached min_depth
     client.getTxConfirmations(w.txId).flatMap {
       case Some(confirmations) if confirmations >= w.minDepth =>
-        client.getTransaction(w.txId).flatMap { tx =>
-          client.getTransactionShortId(w.txId).map {
-            case (height, index) => w match {
-              case w: WatchFundingConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchFundingConfirmedTriggered(height, index, tx))
-              case w: WatchFundingDeeplyBuried => context.self ! TriggerEvent(w.replyTo, w, WatchFundingDeeplyBuriedTriggered(height, index, tx))
-              case w: WatchTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchTxConfirmedTriggered(height, index, tx))
-              case w: WatchParentTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchParentTxConfirmedTriggered(height, index, tx))
+        checkConfirmationProof().andThen(_ =>
+          client.getTransaction(w.txId).flatMap { tx =>
+            client.getTransactionShortId(w.txId).map {
+              case (height, index) => w match {
+                case w: WatchFundingConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchFundingConfirmedTriggered(height, index, tx))
+                case w: WatchFundingDeeplyBuried => context.self ! TriggerEvent(w.replyTo, w, WatchFundingDeeplyBuriedTriggered(height, index, tx))
+                case w: WatchTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchTxConfirmedTriggered(height, index, tx))
+                case w: WatchParentTxConfirmed => context.self ! TriggerEvent(w.replyTo, w, WatchParentTxConfirmedTriggered(height, index, tx))
+              }
             }
           }
-        }
+        )
       case _ => Future.successful((): Unit)
     }
   }
