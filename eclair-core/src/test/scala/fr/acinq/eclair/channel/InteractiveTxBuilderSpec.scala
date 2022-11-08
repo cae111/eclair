@@ -21,11 +21,12 @@ import akka.actor.typed.scaladsl.adapter.{ClassicActorSystemOps, actorRefAdapter
 import akka.pattern.pipe
 import akka.testkit.TestProbe
 import com.softwaremill.quicklens.{ModifyPimp, QuicklensAt}
+import fr.acinq.bitcoin.psbt.Psbt
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, ByteVector64, OP_1, OutPoint, Satoshi, SatoshiLong, Script, ScriptWitness, Transaction, TxOut}
-import fr.acinq.eclair.blockchain.OnChainWallet.{FundTransactionResponse, SignTransactionResponse}
+import fr.acinq.eclair.blockchain.OnChainWallet.FundTransactionResponse
 import fr.acinq.eclair.blockchain.bitcoind.BitcoindService
-import fr.acinq.eclair.blockchain.bitcoind.rpc.BitcoinCoreClient.{MempoolTx, Utxo}
+import fr.acinq.eclair.blockchain.bitcoind.rpc.BitcoinCoreClient.{MempoolTx, ProcessPsbtResponse, Utxo}
 import fr.acinq.eclair.blockchain.bitcoind.rpc.{BitcoinCoreClient, BitcoinJsonRPCClient}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.blockchain.{OnChainWallet, SingleKeyOnChainWallet}
@@ -557,6 +558,7 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
     val utxosA = Seq(75_000 sat, 60_000 sat)
     withFixture(fundingA, utxosA, 0 sat, Nil, FeeratePerKw(5000 sat), 660 sat, 0, RequireConfirmedInputs(forLocal = false, forRemote = false)) { f =>
       import f._
+      import fr.acinq.bitcoin.scalacompat.KotlinUtils._
 
       // Add some unusable utxos to Alice's wallet.
       val probe = TestProbe()
@@ -574,8 +576,8 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
         val minerWallet = new BitcoinCoreClient(bitcoinrpcclient)
         minerWallet.fundTransaction(tx, FeeratePerKw(500 sat), replaceable = true).pipeTo(probe.ref)
         val unsignedTx = probe.expectMsgType[FundTransactionResponse].tx
-        minerWallet.signTransaction(unsignedTx).pipeTo(probe.ref)
-        val signedTx = probe.expectMsgType[SignTransactionResponse].tx
+        minerWallet.signPsbt(new Psbt(unsignedTx)).pipeTo(probe.ref)
+        val signedTx = probe.expectMsgType[ProcessPsbtResponse].finalTx
         assert(Transaction.write(signedTx).length >= 65_000)
         minerWallet.publishTransaction(signedTx).pipeTo(probe.ref)
         probe.expectMsgType[ByteVector32]

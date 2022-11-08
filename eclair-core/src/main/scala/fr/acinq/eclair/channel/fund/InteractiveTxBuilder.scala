@@ -19,10 +19,10 @@ package fr.acinq.eclair.channel.fund
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
 import akka.actor.typed.{ActorRef, Behavior}
 import fr.acinq.bitcoin.ScriptFlags
+import fr.acinq.bitcoin.psbt.Psbt
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, LexicographicalOrdering, OutPoint, Satoshi, SatoshiLong, Script, Transaction, TxIn, TxOut}
 import fr.acinq.eclair.blockchain.OnChainChannelFunder
-import fr.acinq.eclair.blockchain.OnChainWallet.SignTransactionResponse
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.channel.Helpers.Funding
 import fr.acinq.eclair.channel.LocalFundingStatus.DualFundedUnconfirmedFundingTx
@@ -697,15 +697,18 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
   }
 
   private def signTx(unsignedTx: SharedTransaction, remoteSigs_opt: Option[TxSignatures]): Unit = {
+    import fr.acinq.bitcoin.scalacompat.KotlinUtils._
+
     val tx = unsignedTx.buildUnsignedTx()
     if (unsignedTx.localInputs.isEmpty) {
       context.self ! SignTransactionResult(PartiallySignedSharedTransaction(unsignedTx, TxSignatures(fundingParams.channelId, tx, Nil)), remoteSigs_opt)
     } else {
-      context.pipeToSelf(wallet.signTransaction(tx, allowIncomplete = true).map {
-        case SignTransactionResponse(signedTx, _) =>
+      context.pipeToSelf(wallet.signPsbt(new Psbt(tx)).map {
+        response =>
           val localOutpoints = unsignedTx.localInputs.map(toOutPoint).toSet
-          val sigs = signedTx.txIn.filter(txIn => localOutpoints.contains(txIn.outPoint)).map(_.witness)
-          PartiallySignedSharedTransaction(unsignedTx, TxSignatures(fundingParams.channelId, tx, sigs))
+          val partiallySignedTx = response.extractPartiallySignedTx
+          val sigs = partiallySignedTx.txIn.filter(txIn => localOutpoints.contains(txIn.outPoint)).map(_.witness)
+          PartiallySignedSharedTransaction(unsignedTx, TxSignatures(fundingParams.channelId, partiallySignedTx, sigs))
       }) {
         case Failure(t) => WalletFailure(t)
         case Success(signedTx) => SignTransactionResult(signedTx, remoteSigs_opt)
