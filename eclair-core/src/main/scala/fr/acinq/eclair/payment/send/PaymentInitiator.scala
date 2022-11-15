@@ -57,7 +57,7 @@ class PaymentInitiator(nodeParams: NodeParams, outgoingPaymentFactory: PaymentIn
             sender() ! PaymentFailed(paymentId, r.paymentHash, LocalFailure(r.recipientAmount, Nil, UnsupportedFeatures(r.invoice.features)) :: Nil)
           } else if (Features.canUseFeature(nodeParams.features.invoiceFeatures(), r.invoice.features, Features.BasicMultiPartPayment)) {
             val fsm = outgoingPaymentFactory.spawnOutgoingMultiPartPayment(context, paymentCfg)
-            fsm ! MultiPartPaymentLifecycle.SendMultiPartPayment(self, recipient, r.maxAttempts, r.routeParams)
+            fsm ! MultiPartPaymentLifecycle.SendMultiPartPayment(self, r.recipientAmount, recipient, r.maxAttempts, r.routeParams)
             context become main(pending + (paymentId -> PendingPaymentToNode(sender(), r)))
           } else {
             val fsm = outgoingPaymentFactory.spawnOutgoingPayment(context, paymentCfg)
@@ -215,7 +215,7 @@ class PaymentInitiator(nodeParams: NodeParams, outgoingPaymentFactory: PaymentIn
     val paymentCfg = SendPaymentConfig(paymentId, paymentId, None, r.paymentHash, r.recipientAmount, r.recipientNodeId, Upstream.Local(paymentId), Some(r.invoice), storeInDb = true, publishEvent = false, recordPathFindingMetrics = true, Seq(trampolineHop))
     buildTrampolinePayment(r, trampolineHop).map { recipient =>
       val fsm = outgoingPaymentFactory.spawnOutgoingMultiPartPayment(context, paymentCfg)
-      fsm ! MultiPartPaymentLifecycle.SendMultiPartPayment(self, recipient, nodeParams.maxPaymentAttempts, r.routeParams)
+      fsm ! MultiPartPaymentLifecycle.SendMultiPartPayment(self, r.recipientAmount + recipient.trampolineFees, recipient, nodeParams.maxPaymentAttempts, r.routeParams)
     }
   }
 

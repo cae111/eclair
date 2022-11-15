@@ -37,9 +37,6 @@ sealed trait Recipient {
   /** Id of the receiving node. */
   def nodeId: PublicKey
 
-  /** Total amount to send to the receiving node. */
-  def totalAmount: MilliSatoshi
-
   /** Edges that aren't part of the public graph and can be used to reach the recipient. */
   def extraEdges: Seq[Invoice.ExtraEdge]
 
@@ -78,7 +75,7 @@ case class SpontaneousRecipient(nodeId: PublicKey,
                                 expiry: CltvExpiry,
                                 preimage: ByteVector32,
                                 customTlvs: Seq[GenericTlv] = Nil) extends Recipient {
-  override val totalAmount = amount
+  val totalAmount = amount
   override val extraEdges = Nil
 
   override def buildPayloads(paymentHash: ByteVector32, route: Route): Try[PaymentPayloads] = {
@@ -107,14 +104,14 @@ case class ClearTrampolineRecipient(invoice: Bolt11Invoice,
   override val nodeId = trampolineRoute.head.nodeId
   override val extraEdges = Nil
   override val trampolineFees = trampolineRoute.map(_.fee).sum
-  override val totalAmount = finalRecipientTotalAmount + trampolineFees
+  val trampolineAmount = finalRecipientTotalAmount + trampolineFees
   val trampolineExpiry = trampolineRoute.foldLeft(finalRecipientExpiry) { case (current, hop) => current + hop.cltvExpiryDelta }
 
   override def buildPayloads(paymentHash: ByteVector32, route: Route): Try[PaymentPayloads] = {
     require(route.hops.last.nextNodeId == nodeId, "route must reach the desired trampoline node")
     createTrampolinePacket(paymentHash).map { case Sphinx.PacketAndSecrets(trampolinePacket, _) =>
-      val trampolinePayload = NodePayload(nodeId, FinalPayload.Standard.createTrampolinePayload(route.amount, totalAmount, trampolineExpiry, trampolinePaymentSecret, trampolinePacket))
-      OutgoingPaymentPacket.buildPayloads(totalAmount, trampolineExpiry, trampolinePayload, route.hops)
+      val trampolinePayload = NodePayload(nodeId, FinalPayload.Standard.createTrampolinePayload(route.amount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolinePacket))
+      OutgoingPaymentPacket.buildPayloads(trampolineAmount, trampolineExpiry, trampolinePayload, route.hops)
     }
   }
 

@@ -58,9 +58,9 @@ class MultiPartPaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, 
   when(WAIT_FOR_PAYMENT_REQUEST) {
     case Event(r: SendMultiPartPayment, _) =>
       val routeParams = r.routeParams.copy(randomize = false) // we don't randomize the first attempt, regardless of configuration choices
-      log.debug("sending {} with maximum fee {}", r.recipient.totalAmount, r.maxFee)
+      log.debug("sending {} with maximum fee {}", r.amount, r.maxFee)
       val d = PaymentProgress(r, r.maxAttempts, Map.empty, Ignore.empty, Nil)
-      router ! createRouteRequest(nodeParams, r.recipient.totalAmount, r.maxFee, routeParams, d, cfg)
+      router ! createRouteRequest(nodeParams, r.amount, r.maxFee, routeParams, d, cfg)
       goto(WAIT_FOR_ROUTES) using d
   }
 
@@ -130,7 +130,7 @@ class MultiPartPaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, 
       if (abortPayment(pf, d)) {
         gotoAbortedOrStop(PaymentAborted(d.request, d.failures ++ pf.failures, d.pending.keySet - pf.id))
       } else if (d.remainingAttempts == 0) {
-        val failure = LocalFailure(d.request.recipient.totalAmount, Nil, PaymentError.RetryExhausted)
+        val failure = LocalFailure(d.request.amount, Nil, PaymentError.RetryExhausted)
         Metrics.PaymentError.withTag(Tags.Failure, Tags.FailureType(failure)).increment()
         gotoAbortedOrStop(PaymentAborted(d.request, d.failures ++ pf.failures :+ failure, d.pending.keySet - pf.id))
       } else {
@@ -307,12 +307,12 @@ object MultiPartPaymentLifecycle {
    * @param maxAttempts maximum number of retries.
    * @param routeParams parameters to fine-tune the routing algorithm.
    */
-  case class SendMultiPartPayment(replyTo: ActorRef, recipient: Recipient, maxAttempts: Int, routeParams: RouteParams) {
-    require(recipient.totalAmount > 0.msat, "total amount must be > 0")
+  case class SendMultiPartPayment(replyTo: ActorRef, amount: MilliSatoshi, recipient: Recipient, maxAttempts: Int, routeParams: RouteParams) {
+    require(amount > 0.msat, "total amount must be > 0")
 
     val maxFee: MilliSatoshi = recipient match {
-      case r: TrampolineRecipient => routeParams.getMaxFee(recipient.totalAmount) - r.trampolineFees
-      case _ => routeParams.getMaxFee(recipient.totalAmount)
+      case r: TrampolineRecipient => routeParams.getMaxFee(amount) - r.trampolineFees
+      case _ => routeParams.getMaxFee(amount)
     }
   }
 
@@ -406,7 +406,7 @@ object MultiPartPaymentLifecycle {
   private def remainingToSend(request: SendMultiPartPayment, pending: Iterable[Route], includeLocalChannelCost: Boolean): (MilliSatoshi, MilliSatoshi) = {
     val sentAmount = pending.map(_.amount).sum
     val sentFees = pending.map(_.fee(includeLocalChannelCost)).sum
-    (request.recipient.totalAmount - sentAmount, request.maxFee - sentFees)
+    (request.amount - sentAmount, request.maxFee - sentFees)
   }
 
 }

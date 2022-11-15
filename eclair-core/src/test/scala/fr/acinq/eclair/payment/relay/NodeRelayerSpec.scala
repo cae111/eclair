@@ -727,7 +727,7 @@ class NodeRelayerSpec extends ScalaTestWithActorTestKit(ConfigFactory.load("appl
     val outgoingCfg = mockPayFSM.expectMessageType[SendPaymentConfig]
     validateOutgoingCfg(outgoingCfg, Upstream.Trampoline(incomingMultiPart.map(_.add)))
     val outgoingPayment = mockPayFSM.expectMessageType[SendMultiPartPayment]
-    assert(outgoingPayment.recipient.totalAmount == outgoingAmount)
+    assert(outgoingPayment.recipient.asInstanceOf[ClearRecipient].totalAmount == outgoingAmount)
     assert(outgoingPayment.recipient.nodeId == outgoingNodeId)
     assert(outgoingPayment.recipient.isInstanceOf[ClearRecipient])
     val recipient = outgoingPayment.recipient.asInstanceOf[ClearRecipient]
@@ -830,7 +830,7 @@ class NodeRelayerSpec extends ScalaTestWithActorTestKit(ConfigFactory.load("appl
   }
 
   def validateOutgoingPayment(outgoingPayment: SendMultiPartPayment): Unit = {
-    assert(outgoingPayment.recipient.totalAmount == outgoingAmount)
+    assert(outgoingPayment.recipient.asInstanceOf[ClearRecipient].totalAmount == outgoingAmount)
     assert(outgoingPayment.recipient.nodeId == outgoingNodeId)
     assert(outgoingPayment.recipient.isInstanceOf[ClearRecipient])
     val recipient = outgoingPayment.recipient.asInstanceOf[ClearRecipient]
