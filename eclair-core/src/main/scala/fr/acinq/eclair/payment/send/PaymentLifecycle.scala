@@ -65,8 +65,8 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
       goto(WAITING_FOR_ROUTE) using WaitingForRoute(c, Nil, Ignore.empty)
 
     case Event(c: SendPaymentToNode, WaitingForRequest) =>
-      log.debug("sending {} to {}", c.amount, c.targetNodeId)
-      router ! RouteRequest(nodeParams.nodeId, c.targetNodeId, c.amount, c.maxFee, c.recipient.extraEdges, routeParams = c.routeParams, paymentContext = Some(cfg.paymentContext))
+      log.debug("sending {} to {}", c.amount, c.recipient.nodeId)
+      router ! RouteRequest(nodeParams.nodeId, c.recipient.nodeId, c.amount, c.maxFee, c.recipient.extraEdges, routeParams = c.routeParams, paymentContext = Some(cfg.paymentContext))
       if (cfg.storeInDb) {
         paymentsDb.addOutgoingPayment(OutgoingPayment(id, cfg.parentId, cfg.externalId, paymentHash, PaymentType.Standard, c.amount, cfg.recipientAmount, cfg.recipientNodeId, TimestampMilli.now(), cfg.invoice, OutgoingPaymentStatus.Pending))
       }
@@ -138,7 +138,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
     data.c match {
       case sendPaymentToNode: SendPaymentToNode =>
         val ignore1 = PaymentFailure.updateIgnored(failure, data.ignore)
-        router ! RouteRequest(nodeParams.nodeId, data.c.targetNodeId, data.c.amount, sendPaymentToNode.maxFee, data.c.recipient.extraEdges, ignore1, sendPaymentToNode.routeParams, paymentContext = Some(cfg.paymentContext))
+        router ! RouteRequest(nodeParams.nodeId, data.c.recipient.nodeId, data.c.amount, sendPaymentToNode.maxFee, data.c.recipient.extraEdges, ignore1, sendPaymentToNode.routeParams, paymentContext = Some(cfg.paymentContext))
         goto(WAITING_FOR_ROUTE) using WaitingForRoute(data.c, data.failures :+ failure, ignore1)
       case _: SendPaymentToRoute =>
         log.error("unexpected retry during SendPaymentToRoute")
@@ -193,7 +193,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
         res
       case res => res
     }) match {
-      case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) if nodeId == c.targetNodeId =>
+      case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) if nodeId == c.recipient.nodeId =>
         // if destination node returns an error, we fail the payment immediately
         log.warning(s"received an error message from target nodeId=$nodeId, failing the payment (failure=$failureMessage)")
         myStop(c, Left(PaymentFailed(id, paymentHash, failures :+ RemoteFailure(d.c.amount, cfg.fullRoute(route), e))))
@@ -233,7 +233,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
               log.error("unexpected retry during SendPaymentToRoute")
               stop(FSM.Normal)
             case c: SendPaymentToNode =>
-              router ! RouteRequest(nodeParams.nodeId, c.targetNodeId, c.amount, c.maxFee, extraEdges1, ignore1, c.routeParams, paymentContext = Some(cfg.paymentContext))
+              router ! RouteRequest(nodeParams.nodeId, c.recipient.nodeId, c.amount, c.maxFee, extraEdges1, ignore1, c.routeParams, paymentContext = Some(cfg.paymentContext))
               goto(WAITING_FOR_ROUTE) using WaitingForRoute(c, failures :+ failure, ignore1)
           }
         } else {
@@ -244,7 +244,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
               log.error("unexpected retry during SendPaymentToRoute")
               stop(FSM.Normal)
             case c: SendPaymentToNode =>
-              router ! RouteRequest(nodeParams.nodeId, c.targetNodeId, c.amount, c.maxFee, c.recipient.extraEdges, ignore + nodeId, c.routeParams, paymentContext = Some(cfg.paymentContext))
+              router ! RouteRequest(nodeParams.nodeId, c.recipient.nodeId, c.amount, c.maxFee, c.recipient.extraEdges, ignore + nodeId, c.routeParams, paymentContext = Some(cfg.paymentContext))
               goto(WAITING_FOR_ROUTE) using WaitingForRoute(c, failures :+ failure, ignore + nodeId)
           }
         }
@@ -397,8 +397,6 @@ object PaymentLifecycle {
     def amount: MilliSatoshi
     /** Final payment recipient. */
     def recipient: Recipient
-    /** Target node (may be the recipient when using source-routing, or the first trampoline node when using trampoline). */
-    def targetNodeId: PublicKey
     def maxAttempts: Int
     // @formatter:on
   }
@@ -417,7 +415,6 @@ object PaymentLifecycle {
     require(amount > 0.msat, "amount must be > 0")
     require(route.fold(!_.isEmpty, _.hops.nonEmpty), "payment route must not be empty")
 
-    override val targetNodeId: PublicKey = route.fold(_.targetNodeId, _.hops.last.nextNodeId)
     override val maxAttempts: Int = 1
 
     def printRoute(): String = route match {
@@ -442,11 +439,6 @@ object PaymentLifecycle {
                                routeParams: RouteParams) extends SendPayment {
     require(amount > 0.msat, "amount must be > 0")
 
-    override val targetNodeId: PublicKey = recipient match {
-      // When using trampoline, we only need to find a route to the first trampoline node, not the final node.
-      case r: TrampolineRecipient => r.trampolineNodeId
-      case r => r.nodeId
-    }
     val maxFee: MilliSatoshi = recipient match {
       case r: TrampolineRecipient => routeParams.getMaxFee(amount) - r.trampolineFees
       case _ => routeParams.getMaxFee(amount)

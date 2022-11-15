@@ -727,8 +727,8 @@ class NodeRelayerSpec extends ScalaTestWithActorTestKit(ConfigFactory.load("appl
     val outgoingCfg = mockPayFSM.expectMessageType[SendPaymentConfig]
     validateOutgoingCfg(outgoingCfg, Upstream.Trampoline(incomingMultiPart.map(_.add)))
     val outgoingPayment = mockPayFSM.expectMessageType[SendMultiPartPayment]
-    assert(outgoingPayment.amountToSend == outgoingAmount)
-    assert(outgoingPayment.targetNodeId == outgoingNodeId)
+    assert(outgoingPayment.recipient.totalAmount == outgoingAmount)
+    assert(outgoingPayment.recipient.nodeId == outgoingNodeId)
     assert(outgoingPayment.recipient.isInstanceOf[ClearRecipient])
     val recipient = outgoingPayment.recipient.asInstanceOf[ClearRecipient]
     assert(recipient.nextTrampolineOnion_opt.isEmpty)
@@ -772,7 +772,7 @@ class NodeRelayerSpec extends ScalaTestWithActorTestKit(ConfigFactory.load("appl
     validateOutgoingCfg(outgoingCfg, Upstream.Trampoline(incomingMultiPart.map(_.add)))
     val outgoingPayment = mockPayFSM.expectMessageType[SendPaymentToNode]
     assert(outgoingPayment.amount == outgoingAmount)
-    assert(outgoingPayment.targetNodeId == outgoingNodeId)
+    assert(outgoingPayment.recipient.nodeId == outgoingNodeId)
     assert(outgoingPayment.recipient.isInstanceOf[ClearRecipient])
     val recipient = outgoingPayment.recipient.asInstanceOf[ClearRecipient]
     assert(recipient.nextTrampolineOnion_opt.isEmpty)
@@ -830,8 +830,8 @@ class NodeRelayerSpec extends ScalaTestWithActorTestKit(ConfigFactory.load("appl
   }
 
   def validateOutgoingPayment(outgoingPayment: SendMultiPartPayment): Unit = {
-    assert(outgoingPayment.amountToSend == outgoingAmount)
-    assert(outgoingPayment.targetNodeId == outgoingNodeId)
+    assert(outgoingPayment.recipient.totalAmount == outgoingAmount)
+    assert(outgoingPayment.recipient.nodeId == outgoingNodeId)
     assert(outgoingPayment.recipient.isInstanceOf[ClearRecipient])
     val recipient = outgoingPayment.recipient.asInstanceOf[ClearRecipient]
     assert(recipient.paymentSecret !== incomingSecret) // we should generate a new outgoing secret

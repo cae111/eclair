@@ -60,7 +60,7 @@ class MultiPartPaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, 
       val routeParams = r.routeParams.copy(randomize = false) // we don't randomize the first attempt, regardless of configuration choices
       log.debug("sending {} with maximum fee {}", r.recipient.totalAmount, r.maxFee)
       val d = PaymentProgress(r, r.maxAttempts, Map.empty, Ignore.empty, Nil)
-      router ! createRouteRequest(nodeParams, r.amountToSend, r.maxFee, routeParams, d, cfg)
+      router ! createRouteRequest(nodeParams, r.recipient.totalAmount, r.maxFee, routeParams, d, cfg)
       goto(WAIT_FOR_ROUTES) using d
   }
 
@@ -310,15 +310,6 @@ object MultiPartPaymentLifecycle {
   case class SendMultiPartPayment(replyTo: ActorRef, recipient: Recipient, maxAttempts: Int, routeParams: RouteParams) {
     require(recipient.totalAmount > 0.msat, "total amount must be > 0")
 
-    val targetNodeId: PublicKey = recipient match {
-      // When using trampoline, we only need to find a route to the first trampoline node, not the final node.
-      case r: TrampolineRecipient => r.trampolineNodeId
-      case r => r.nodeId
-    }
-    val amountToSend: MilliSatoshi = recipient match {
-      case r: TrampolineRecipient => r.trampolineAmount
-      case r => r.totalAmount
-    }
     val maxFee: MilliSatoshi = recipient match {
       case r: TrampolineRecipient => routeParams.getMaxFee(recipient.totalAmount) - r.trampolineFees
       case _ => routeParams.getMaxFee(recipient.totalAmount)
@@ -389,7 +380,7 @@ object MultiPartPaymentLifecycle {
   private def createRouteRequest(nodeParams: NodeParams, toSend: MilliSatoshi, maxFee: MilliSatoshi, routeParams: RouteParams, d: PaymentProgress, cfg: SendPaymentConfig): RouteRequest =
     RouteRequest(
       nodeParams.nodeId,
-      d.request.targetNodeId,
+      d.request.recipient.nodeId,
       toSend,
       maxFee,
       d.request.recipient.extraEdges,
@@ -405,7 +396,7 @@ object MultiPartPaymentLifecycle {
 
   /** When we receive an error from the final recipient or payment gets settled on chain, we should fail the whole payment, it's useless to retry. */
   private def abortPayment(pf: PaymentFailed, d: PaymentProgress): Boolean = pf.failures.exists {
-    case f: RemoteFailure => f.e.originNode == d.request.targetNodeId
+    case f: RemoteFailure => f.e.originNode == d.request.recipient.nodeId
     case LocalFailure(_, _, _: HtlcOverriddenByLocalCommit) => true
     case LocalFailure(_, _, _: HtlcsWillTimeoutUpstream) => true
     case LocalFailure(_, _, _: HtlcsTimedoutDownstream) => true
@@ -415,7 +406,7 @@ object MultiPartPaymentLifecycle {
   private def remainingToSend(request: SendMultiPartPayment, pending: Iterable[Route], includeLocalChannelCost: Boolean): (MilliSatoshi, MilliSatoshi) = {
     val sentAmount = pending.map(_.amount).sum
     val sentFees = pending.map(_.fee(includeLocalChannelCost)).sum
-    (request.amountToSend - sentAmount, request.maxFee - sentFees)
+    (request.recipient.totalAmount - sentAmount, request.maxFee - sentFees)
   }
 
 }

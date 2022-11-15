@@ -34,17 +34,11 @@ import scala.util.{Success, Try}
  */
 
 sealed trait Recipient {
-  /** Id of the final receiving node. */
+  /** Id of the receiving node. */
   def nodeId: PublicKey
 
-  /** Total amount to send to the final receiving node. */
+  /** Total amount to send to the receiving node. */
   def totalAmount: MilliSatoshi
-
-  /** Expiry at the receiving node (CLTV for the receiving node's received HTLCs). */
-  def expiry: CltvExpiry
-
-  /** Features supported by the recipient. */
-  def features: Features[InvoiceFeature]
 
   /** Edges that aren't part of the public graph and can be used to reach the recipient. */
   def extraEdges: Seq[Invoice.ExtraEdge]
@@ -85,7 +79,6 @@ case class SpontaneousRecipient(nodeId: PublicKey,
                                 preimage: ByteVector32,
                                 customTlvs: Seq[GenericTlv] = Nil) extends Recipient {
   override val totalAmount = amount
-  override val features = Features.empty
   override val extraEdges = Nil
 
   override def buildPayloads(paymentHash: ByteVector32, route: Route): Try[PaymentPayloads] = {
@@ -95,12 +88,7 @@ case class SpontaneousRecipient(nodeId: PublicKey,
 }
 
 sealed trait TrampolineRecipient extends Recipient {
-  // @formatter:off
-  def trampolineNodeId: PublicKey
   def trampolineFees: MilliSatoshi
-  def trampolineAmount: MilliSatoshi
-  def trampolineExpiry: CltvExpiry
-  // @formatter:on
 }
 
 /**
@@ -108,36 +96,33 @@ sealed trait TrampolineRecipient extends Recipient {
  * We do not yet support splitting a payment across multiple trampoline routes.
  */
 case class ClearTrampolineRecipient(invoice: Bolt11Invoice,
-                                    totalAmount: MilliSatoshi,
-                                    expiry: CltvExpiry,
+                                    finalRecipientTotalAmount: MilliSatoshi,
+                                    finalRecipientExpiry: CltvExpiry,
                                     trampolineRoute: Seq[NodeHop],
                                     trampolinePaymentSecret: ByteVector32,
                                     customTlvs: Seq[GenericTlv] = Nil) extends TrampolineRecipient {
   require(trampolineRoute.nonEmpty, "trampoline route must be provided to reach a trampoline recipient")
   require(trampolineRoute.last.nextNodeId == invoice.nodeId, "trampoline route must end at the recipient")
 
-  override val nodeId = invoice.nodeId
-  override val features = invoice.features
+  override val nodeId = trampolineRoute.head.nodeId
   override val extraEdges = Nil
-
-  override val trampolineNodeId = trampolineRoute.head.nodeId
   override val trampolineFees = trampolineRoute.map(_.fee).sum
-  override val trampolineAmount = totalAmount + trampolineFees
-  override val trampolineExpiry = trampolineRoute.foldLeft(expiry) { case (current, hop) => current + hop.cltvExpiryDelta }
+  override val totalAmount = finalRecipientTotalAmount + trampolineFees
+  val trampolineExpiry = trampolineRoute.foldLeft(finalRecipientExpiry) { case (current, hop) => current + hop.cltvExpiryDelta }
 
   override def buildPayloads(paymentHash: ByteVector32, route: Route): Try[PaymentPayloads] = {
-    require(route.hops.last.nextNodeId == trampolineNodeId, "route must reach the desired trampoline node")
+    require(route.hops.last.nextNodeId == nodeId, "route must reach the desired trampoline node")
     createTrampolinePacket(paymentHash).map { case Sphinx.PacketAndSecrets(trampolinePacket, _) =>
-      val trampolinePayload = NodePayload(trampolineNodeId, FinalPayload.Standard.createTrampolinePayload(route.amount, trampolineAmount, trampolineExpiry, trampolinePaymentSecret, trampolinePacket))
-      OutgoingPaymentPacket.buildPayloads(trampolineAmount, trampolineExpiry, trampolinePayload, route.hops)
+      val trampolinePayload = NodePayload(nodeId, FinalPayload.Standard.createTrampolinePayload(route.amount, totalAmount, trampolineExpiry, trampolinePaymentSecret, trampolinePacket))
+      OutgoingPaymentPacket.buildPayloads(totalAmount, trampolineExpiry, trampolinePayload, route.hops)
     }
   }
 
   def createTrampolinePacket(paymentHash: ByteVector32): Try[Sphinx.PacketAndSecrets] = {
     if (invoice.features.hasFeature(Features.TrampolinePaymentPrototype)) {
       // This is the payload the final recipient will receive, so we use the invoice's payment secret.
-      val finalPayload = NodePayload(nodeId, FinalPayload.Standard.createPayload(totalAmount, totalAmount, expiry, invoice.paymentSecret, invoice.paymentMetadata, customTlvs))
-      val payloads = trampolineRoute.reverse.foldLeft(PaymentPayloads(totalAmount, expiry, Seq(finalPayload))) {
+      val finalPayload = NodePayload(invoice.nodeId, FinalPayload.Standard.createPayload(finalRecipientTotalAmount, finalRecipientTotalAmount, finalRecipientExpiry, invoice.paymentSecret, invoice.paymentMetadata, customTlvs))
+      val payloads = trampolineRoute.reverse.foldLeft(PaymentPayloads(finalRecipientTotalAmount, finalRecipientExpiry, Seq(finalPayload))) {
         case (current, hop) =>
           val payload = NodePayload(hop.nodeId, IntermediatePayload.NodeRelay.Standard(current.amount, current.expiry, hop.nextNodeId))
           PaymentPayloads(current.amount + hop.fee, current.expiry + hop.cltvExpiryDelta, payload +: current.payloads)
@@ -147,10 +132,10 @@ case class ClearTrampolineRecipient(invoice: Bolt11Invoice,
       // The recipient doesn't support trampoline: the next-to-last node in the trampoline route will convert the
       // payment to a non-trampoline payment. The final payload will thus never reach the recipient, so we create the
       // smallest payload possible to avoid overflowing the trampoline onion size.
-      val dummyFinalPayload = NodePayload(nodeId, IntermediatePayload.ChannelRelay.Standard(ShortChannelId(0), 0 msat, CltvExpiry(0)))
-      val lastTrampolinePayload = NodePayload(trampolineRoute.last.nodeId, IntermediatePayload.NodeRelay.Standard.createNodeRelayToNonTrampolinePayload(totalAmount, totalAmount, expiry, nodeId, invoice))
-      val lastTrampolineAmount = totalAmount + trampolineRoute.last.fee
-      val lastTrampolineExpiry = expiry + trampolineRoute.last.cltvExpiryDelta
+      val dummyFinalPayload = NodePayload(invoice.nodeId, IntermediatePayload.ChannelRelay.Standard(ShortChannelId(0), 0 msat, CltvExpiry(0)))
+      val lastTrampolinePayload = NodePayload(trampolineRoute.last.nodeId, IntermediatePayload.NodeRelay.Standard.createNodeRelayToNonTrampolinePayload(finalRecipientTotalAmount, finalRecipientTotalAmount, finalRecipientExpiry, invoice.nodeId, invoice))
+      val lastTrampolineAmount = finalRecipientTotalAmount + trampolineRoute.last.fee
+      val lastTrampolineExpiry = finalRecipientExpiry + trampolineRoute.last.cltvExpiryDelta
       val payloads = trampolineRoute.reverse.tail.foldLeft(PaymentPayloads(lastTrampolineAmount, lastTrampolineExpiry, Seq(lastTrampolinePayload, dummyFinalPayload))) {
         case (current, hop) =>
           val payload = NodePayload(hop.nodeId, IntermediatePayload.NodeRelay.Standard(current.amount, current.expiry, hop.nextNodeId))
