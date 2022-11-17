@@ -202,6 +202,7 @@ trait ChannelOpenDualFunded extends DualFundingHandlers with ErrorHandlers {
             localParams.isInitiator,
             accept.fundingAmount,
             open.fundingAmount,
+            commonInput_opt = None,
             fundingPubkeyScript,
             open.lockTime,
             open.dustLimit.max(accept.dustLimit),
@@ -263,6 +264,7 @@ trait ChannelOpenDualFunded extends DualFundingHandlers with ErrorHandlers {
             localParams.isInitiator,
             d.lastSent.fundingAmount,
             accept.fundingAmount,
+            commonInput_opt = None,
             fundingPubkeyScript,
             d.lastSent.lockTime,
             d.lastSent.dustLimit.max(accept.dustLimit),
@@ -316,6 +318,9 @@ trait ChannelOpenDualFunded extends DualFundingHandlers with ErrorHandlers {
           stay() sending Warning(d.channelId, InvalidRbfAttempt(d.channelId).getMessage)
         case _: TxAckRbf =>
           log.info("ignoring unexpected tx_ack_rbf message")
+          stay() sending Warning(d.channelId, InvalidRbfAttempt(d.channelId).getMessage)
+        case _: SpliceInit | _: SpliceAck =>
+          log.info("ignoring unexpected splice message")
           stay() sending Warning(d.channelId, InvalidRbfAttempt(d.channelId).getMessage)
       }
 

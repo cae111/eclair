@@ -18,10 +18,11 @@ package fr.acinq.eclair.channel.fsm
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.{ClassicActorContextOps, actorRefAdapter}
-import akka.actor.{Actor, ActorContext, ActorRef, FSM, OneForOneStrategy, PossiblyHarmful, Props, SupervisorStrategy, typed}
+import akka.actor.{Actor, ActorContext, ActorRef, FSM, OneForOneStrategy, PossiblyHarmful, Props, Status, SupervisorStrategy, typed}
 import akka.event.Logging.MDC
 import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Satoshi, SatoshiLong, Transaction}
+import fr.acinq.eclair.Features.DualFunding
 import fr.acinq.eclair.Logs.LogCategory
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.OnChainWallet.MakeFundingTxResponse
@@ -30,11 +31,13 @@ import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher
 import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher._
 import fr.acinq.eclair.blockchain.bitcoind.rpc.BitcoinCoreClient
 import fr.acinq.eclair.channel.Helpers.Syncing.SyncResult
-import fr.acinq.eclair.channel.Helpers.{Closing, Syncing, getRelayFees, scidForChannelUpdate}
+import fr.acinq.eclair.channel.Helpers._
 import fr.acinq.eclair.channel.MetaCommitments.PostRevocationAction
 import fr.acinq.eclair.channel.Monitoring.Metrics.ProcessMessage
 import fr.acinq.eclair.channel.Monitoring.{Metrics, Tags}
 import fr.acinq.eclair.channel._
+import fr.acinq.eclair.channel.fund.InteractiveTxBuilder
+import fr.acinq.eclair.channel.fund.InteractiveTxBuilder.{FullySignedSharedTransaction, InteractiveTxParams, PartiallySignedSharedTransaction, RequireConfirmedInputs}
 import fr.acinq.eclair.channel.publish.TxPublisher
 import fr.acinq.eclair.channel.publish.TxPublisher.{PublishFinalTx, SetChannelId}
 import fr.acinq.eclair.crypto.keymanager.ChannelKeyManager
@@ -471,20 +474,26 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
       }
 
     case Event(commit: CommitSig, d: DATA_NORMAL) =>
-      d.metaCommitments.receiveCommit(commit, keyManager) match {
-        case Right((metaCommitments1, revocation)) =>
-          log.debug("received a new sig, spec:\n{}", metaCommitments1.latest.specs2String)
-          if (metaCommitments1.common.localHasChanges) {
-            // if we have newly acknowledged changes let's sign them
-            self ! CMD_SIGN()
+      d.spliceStatus match {
+        case SpliceStatus.SpliceInProgress(txBuilder) =>
+          txBuilder ! InteractiveTxBuilder.ReceiveCommitSig(commit)
+          stay()
+        case _ =>
+          d.metaCommitments.receiveCommit(commit, keyManager) match {
+            case Right((metaCommitments1, revocation)) =>
+              log.debug("received a new sig, spec:\n{}", metaCommitments1.latest.specs2String)
+              if (metaCommitments1.common.localHasChanges) {
+                // if we have newly acknowledged changes let's sign them
+                self ! CMD_SIGN()
+              }
+              if (d.metaCommitments.availableBalanceForSend != metaCommitments1.availableBalanceForSend) {
+                // we send this event only when our balance changes
+                context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortIds, metaCommitments1))
+              }
+              context.system.eventStream.publish(ChannelSignatureReceived(self, metaCommitments1))
+              stay() using d.copy(metaCommitments = metaCommitments1) storing() sending revocation
+            case Left(cause) => handleLocalError(cause, d, Some(commit))
           }
-          if (d.metaCommitments.availableBalanceForSend != metaCommitments1.availableBalanceForSend) {
-            // we send this event only when our balance changes
-            context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortIds, metaCommitments1))
-          }
-          context.system.eventStream.publish(ChannelSignatureReceived(self, metaCommitments1))
-          stay() using d.copy(metaCommitments = metaCommitments1) storing() sending revocation
-        case Left(cause) => handleLocalError(cause, d, Some(commit))
       }
 
     case Event(revocation: RevokeAndAck, d: DATA_NORMAL) =>
@@ -699,6 +708,129 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
           log.debug("refreshing channel_update announcement (reason={})", reason)
           // we use goto() instead of stay() because we want to fire transitions
           goto(NORMAL) using d.copy(channelUpdate = channelUpdate1) storing()
+      }
+
+    case Event(cmd: CMD_SPLICE_IN, d: DATA_NORMAL) =>
+      val replyTo = if (cmd.replyTo == ActorRef.noSender) sender() else cmd.replyTo
+      d.spliceStatus match {
+        case SpliceStatus.NoSplice =>
+          if (d.metaCommitments.hasNoPendingHtlcsOrFeeUpdate && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
+            log.info(s"initiating splice with local.in.amount=${cmd.additionalLocalFunding} local.in.push=${cmd.pushAmount}")
+            val spliceInit = SpliceInit(d.channelId,
+              lockTime = nodeParams.currentBlockHeight.toLong,
+              feerate = nodeParams.onChainFeeConf.feeEstimator.getFeeratePerKw(target = nodeParams.onChainFeeConf.feeTargets.fundingBlockTarget),
+              fundingContribution = cmd.additionalLocalFunding,
+              pushAmount = cmd.pushAmount)
+            stay() using d.copy(spliceStatus = SpliceStatus.SpliceRequested(cmd.copy(replyTo = replyTo), spliceInit)) sending spliceInit
+          } else {
+            log.warning("cannot do splice")
+            replyTo ! Status.Failure(CommandUnavailableInThisState(d.channelId, "CMD_SPLICE_IN", NORMAL))
+            stay()
+          }
+        case _ =>
+          log.warning("cannot initiate splice, another one is already in progress")
+          replyTo ! Status.Failure(InvalidRbfAlreadyInProgress(d.channelId))
+          stay()
+      }
+
+    case Event(msg: SpliceInit, d: DATA_NORMAL) =>
+      d.spliceStatus match {
+        case SpliceStatus.NoSplice =>
+          if (d.metaCommitments.hasNoPendingHtlcsOrFeeUpdate && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
+            log.info(s"accepting splice with remote.in.amount=${msg.fundingContribution} remote.in.push=${msg.pushAmount}")
+            val spliceAck = SpliceAck(d.channelId, fundingContribution = 0.sat, pushAmount = 0.msat) // only remote contributes to the splice
+            val parentCommitments = d.metaCommitments.latest
+            val fundingParams = InteractiveTxParams(
+              channelId = d.channelId,
+              isInitiator = false,
+              localAmount = spliceAck.fundingContribution,
+              remoteAmount = msg.fundingContribution,
+              commonInput_opt = Some(parentCommitments.commitment.commitInput),
+              fundingPubkeyScript = parentCommitments.commitment.commitInput.txOut.publicKeyScript, // same pubkey script as before
+              lockTime = nodeParams.currentBlockHeight.toLong,
+              dustLimit = parentCommitments.localParams.dustLimit.max(d.metaCommitments.params.remoteParams.dustLimit),
+              targetFeerate = msg.feerate,
+              requireConfirmedInputs = RequireConfirmedInputs(forLocal = false, forRemote = false), // TODO: revisit this
+            )
+            val txBuilder = context.spawnAnonymous(InteractiveTxBuilder(
+              nodeParams, fundingParams,
+              commitmentParams = d.metaCommitments.params,
+              purpose = InteractiveTxBuilder.SpliceTx(parentCommitments.common, parentCommitments.commitment),
+              localPushAmount = spliceAck.pushAmount, remotePushAmount = msg.pushAmount,
+              wallet
+            ))
+            txBuilder ! InteractiveTxBuilder.Start(self)
+            stay() using d.copy(spliceStatus = SpliceStatus.SpliceInProgress(txBuilder)) sending spliceAck
+          } else {
+            log.info("rejecting splice request")
+            stay()
+          }
+        case _ =>
+          log.warning("cannot initiate splice, another one is already in progress")
+          stay() sending TxAbort(d.channelId, InvalidRbfAlreadyInProgress(d.channelId).getMessage)
+      }
+
+    case Event(msg: SpliceAck, d: DATA_NORMAL) =>
+      d.spliceStatus match {
+        case SpliceStatus.SpliceRequested(cmd, init) =>
+          log.info("our peer accepted our splice request and will contribute {} to the funding transaction", msg.fundingContribution)
+          cmd.replyTo ! RES_SUCCESS(cmd, d.channelId)
+          val parentCommitments = d.metaCommitments.latest
+          val fundingParams = InteractiveTxParams(
+            channelId = d.channelId,
+            isInitiator = true,
+            localAmount = cmd.additionalLocalFunding,
+            remoteAmount = msg.fundingContribution,
+            commonInput_opt = Some(parentCommitments.commitment.commitInput),
+            fundingPubkeyScript = parentCommitments.commitInput.txOut.publicKeyScript, // same pubkey script as before
+            lockTime = init.lockTime,
+            dustLimit = d.metaCommitments.params.localParams.dustLimit.max(d.metaCommitments.params.remoteParams.dustLimit),
+            targetFeerate = init.feerate,
+            requireConfirmedInputs = RequireConfirmedInputs(forLocal = false, forRemote = false), // TODO: revisit this
+          )
+          val txBuilder = context.spawnAnonymous(InteractiveTxBuilder(
+            nodeParams, fundingParams,
+            commitmentParams = d.metaCommitments.params,
+            purpose = InteractiveTxBuilder.SpliceTx(parentCommitments.common, parentCommitments.commitment),
+            localPushAmount = cmd.pushAmount, remotePushAmount = msg.pushAmount,
+            wallet
+          ))
+          txBuilder ! InteractiveTxBuilder.Start(self)
+          stay() using d.copy(spliceStatus = SpliceStatus.SpliceInProgress(txBuilder))
+        case _ =>
+          log.info("ignoring unexpected tx_ack_rbf")
+          stay() sending Warning(d.channelId, UnexpectedInteractiveTxMessage(d.channelId, msg).getMessage)
+      }
+
+    case Event(msg: InteractiveTxBuilder.Response, d: DATA_NORMAL) => msg match {
+      case InteractiveTxBuilder.SendMessage(msg) => stay() sending msg
+      case InteractiveTxBuilder.Succeeded(fundingParams, fundingTx, commitment) =>
+        log.info(s"splice completed: new funding txid=${fundingTx.txId} tx=${fundingTx.signedTx_opt.getOrElse("n/a")}")
+        // We now have more than one version of the funding tx, so we cannot use zero-conf.
+        val fundingMinDepth = Funding.minDepthDualFunding(nodeParams.channelConf, d.metaCommitments.params.localParams.initFeatures, fundingParams).getOrElse(nodeParams.channelConf.minDepthBlocks.toLong)
+        blockchain ! WatchFundingConfirmed(self, commitment.fundingTxId, fundingMinDepth)
+        val metaCommitments1 = d.metaCommitments.copy(commitments = commitment +: d.metaCommitments.commitments)
+        val d1 = d.copy(metaCommitments = metaCommitments1, spliceStatus = SpliceStatus.NoSplice)
+        fundingTx match {
+          case fundingTx: PartiallySignedSharedTransaction => stay() using d1 storing() sending fundingTx.localSigs
+          case fundingTx: FullySignedSharedTransaction => stay() using d1 storing() sending fundingTx.localSigs calling publishFundingTx(fundingParams, fundingTx)
+        }
+      case f: InteractiveTxBuilder.Failed =>
+        log.info("splice attempt failed: {}", f.cause.getMessage)
+        stay() using d.copy(spliceStatus = SpliceStatus.NoSplice) sending TxAbort(d.channelId, f.cause.getMessage)
+    }
+
+    case Event(msg: InteractiveTxMessage, d: DATA_NORMAL) =>
+      (d.spliceStatus, msg) match {
+        case (SpliceStatus.SpliceInProgress(txBuilder), msg: InteractiveTxConstructionMessage) =>
+          txBuilder ! InteractiveTxBuilder.ReceiveTxMessage(msg)
+          stay()
+        case (SpliceStatus.SpliceInProgress(txBuilder), msg: TxSignatures) =>
+          txBuilder ! InteractiveTxBuilder.ReceiveTxSigs(msg)
+          stay()
+        case _ =>
+          log.info("ignoring unexpected interactive-tx message: {}", msg.getClass.getSimpleName)
+          stay() sending Warning(d.channelId, UnexpectedInteractiveTxMessage(d.channelId, msg).getMessage)
       }
 
     case Event(INPUT_DISCONNECTED, d: DATA_NORMAL) =>
@@ -1052,7 +1184,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
 
     case Event(getTxResponse: GetTxWithMetaResponse, d: DATA_CLOSING) if getTxResponse.txid == d.metaCommitments.latest.fundingTxId =>
       // NB: waitingSinceBlock contains the block at which closing was initiated, not the block at which funding was initiated.
-          // That means we're lenient with our peer and give its funding tx more time to confirm, to avoid having to store two distinct
+      // That means we're lenient with our peer and give its funding tx more time to confirm, to avoid having to store two distinct
       // waitingSinceBlock (e.g. closingWaitingSinceBlock and fundingWaitingSinceBlock).
       handleGetFundingTx(getTxResponse, d.waitingSince, d.metaCommitments.latest.localFundingStatus.signedTx_opt)
 
@@ -1093,7 +1225,10 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
       }
 
     case Event(WatchFundingSpentTriggered(tx), d: DATA_CLOSING) =>
-      if (d.mutualClosePublished.exists(_.tx.txid == tx.txid)) {
+      if (d.metaCommitments.commitments.map(_.fundingTxId).contains(tx.txid)) {
+        // if the spending tx is itself a funding tx, this is a splice and there is nothing to do
+        stay()
+      } else if (d.mutualClosePublished.exists(_.tx.txid == tx.txid)) {
         // we already know about this tx, probably because we have published it ourselves after successful negotiation
         stay()
       } else if (d.mutualCloseProposed.exists(_.tx.txid == tx.txid)) {
@@ -1601,15 +1736,20 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
     case Event(WatchFundingSpentTriggered(tx), d: DATA_WAIT_FOR_REMOTE_PUBLISH_FUTURE_COMMITMENT) => handleRemoteSpentFuture(tx, d)
 
     case Event(WatchFundingSpentTriggered(tx), d: PersistentChannelData) =>
-      if (tx.txid == d.metaCommitments.latest.remoteCommit.txid) {
-        handleRemoteSpentCurrent(tx, d)
-      } else if (d.metaCommitments.latest.remoteNextCommitInfo.left.toOption.exists(_.nextRemoteCommit.txid == tx.txid)) {
-        handleRemoteSpentNext(tx, d)
-      } else if (tx.txid == d.metaCommitments.latest.localCommit.commitTxAndRemoteSig.commitTx.tx.txid) {
-        log.warning(s"processing local commit spent from the outside")
-        spendLocalCurrent(d)
+ if (d.metaCommitments.commitments.map(_.fundingTxId).contains(tx.txid)) {
+        // if the spending tx is itself a funding tx, this is a splice and there is nothing to do
+        stay()
       } else {
-        handleRemoteSpentOther(tx, d)
+        if (tx.txid == d.metaCommitments.latest.remoteCommit.txid) {
+          handleRemoteSpentCurrent(tx, d)
+        } else if (d.metaCommitments.latest.remoteNextCommitInfo.left.toOption.exists(_.nextRemoteCommit.txid == tx.txid)) {
+          handleRemoteSpentNext(tx, d)
+        } else if (tx.txid == d.metaCommitments.latest.localCommit.commitTxAndRemoteSig.commitTx.tx.txid) {
+          log.warning(s"processing local commit spent from the outside")
+          spendLocalCurrent(d)
+        } else {
+          handleRemoteSpentOther(tx, d)
+        }
       }
   }
 

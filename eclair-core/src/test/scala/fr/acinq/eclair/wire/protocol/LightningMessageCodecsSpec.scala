@@ -29,7 +29,7 @@ import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.wire.protocol.ChannelTlv.{ChannelTypeTlv, PushAmountTlv, RequireConfirmedInputsTlv, UpfrontShutdownScriptTlv}
 import fr.acinq.eclair.wire.protocol.LightningMessageCodecs._
 import fr.acinq.eclair.wire.protocol.ReplyChannelRangeTlv._
-import fr.acinq.eclair.wire.protocol.TxRbfTlv.SharedOutputContributionTlv
+import fr.acinq.eclair.wire.protocol.InteractiveTxTlv.SharedOutputContributionTlv
 import org.json4s.jackson.Serialization
 import org.scalatest.funsuite.AnyFunSuite
 import scodec.DecodeResult
@@ -175,8 +175,8 @@ class LightningMessageCodecsSpec extends AnyFunSuite {
       TxRemoveOutput(channelId1, UInt64(1)) -> hex"0045 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0000000000000001",
       TxComplete(channelId1) -> hex"0046 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       TxComplete(channelId1, TlvStream(Nil, Seq(GenericTlv(UInt64(231), hex"deadbeef"), GenericTlv(UInt64(507), hex"")))) -> hex"0046 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa e704deadbeef fd01fb00",
-      TxSignatures(channelId1, tx2, Seq(ScriptWitness(Seq(hex"dead", hex"beef")), ScriptWitness(Seq(hex"", hex"01010101", hex"", hex"02")))) -> hex"0047 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa fc7aa8845f192959202c1b7ff704e7cbddded463c05e844676a94ccb4bed69f1 0002 00020002dead0002beef 0004 00000004010101010000000102",
-      TxSignatures(channelId2, tx1, Nil) -> hex"0047 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1f2ec025a33e39ef8e177afcdc1adc855bf128dc906182255aeb64efa825f106 0000",
+      TxSignatures(channelId1, tx2, Seq(ScriptWitness(Seq(hex"dead", hex"beef")), ScriptWitness(Seq(hex"", hex"01010101", hex"", hex"02"))), None) -> hex"0047 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa fc7aa8845f192959202c1b7ff704e7cbddded463c05e844676a94ccb4bed69f1 0002 00020002dead0002beef 0004 00000004010101010000000102",
+      TxSignatures(channelId2, tx1, Nil, None) -> hex"0047 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1f2ec025a33e39ef8e177afcdc1adc855bf128dc906182255aeb64efa825f106 0000",
       TxInitRbf(channelId1, 8388607, FeeratePerKw(4000 sat)) -> hex"0048 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 007fffff 00000fa0",
       TxInitRbf(channelId1, 0, FeeratePerKw(4000 sat), TlvStream[TxInitRbfTlv](SharedOutputContributionTlv(5000 sat))) -> hex"0048 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 00000000 00000fa0 00021388",
       TxAckRbf(channelId2) -> hex"0049 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

@@ -222,12 +222,20 @@ private[channel] object ChannelCodecs4 {
         ("amount" | satoshi) ::
         ("scriptPubKey" | lengthDelimited(bytes))).as[RemoteTxAddOutput]
 
+    private val multisig2of2InputCodec: Codec[Multisig2of2Input] = (
+      ("outPoint" | outPointCodec) ::
+        ("txOut" | txOutCodec) ::
+        ("sequence" | uint32) ::
+        ("localPubkey" | publicKey) ::
+        ("remotePubkey" | publicKey)).as[Multisig2of2Input]
+
     private val sharedTransactionCodec: Codec[SharedTransaction] = (
       ("localInputs" | listOfN(uint16, lengthDelimited(txAddInputCodec))) ::
         ("remoteInputs" | listOfN(uint16, remoteTxAddInputCodec)) ::
         ("localOutputs" | listOfN(uint16, lengthDelimited(txAddOutputCodec))) ::
         ("remoteOutputs" | listOfN(uint16, remoteTxAddOutputCodec)) ::
-        ("lockTime" | uint32)).as[SharedTransaction]
+        ("lockTime" | uint32) ::
+        ("commonInput" | optional(bool8, multisig2of2InputCodec))).as[SharedTransaction]
 
     private val partiallySignedSharedTransactionCodec: Codec[PartiallySignedSharedTransaction] = (
       ("sharedTx" | sharedTransactionCodec) ::
@@ -295,6 +303,7 @@ private[channel] object ChannelCodecs4 {
         ("isInitiator" | bool8) ::
         ("localAmount" | satoshi) ::
         ("remoteAmount" | satoshi) ::
+        ("commonInput_opt" | provide(Option.empty[InputInfo])) :: // NB: we never persist in-progress splice attempts
         ("fundingPubkeyScript" | lengthDelimited(bytes)) ::
         ("lockTime" | uint32) ::
         ("dustLimit" | satoshi) ::
@@ -371,7 +380,8 @@ private[channel] object ChannelCodecs4 {
         ("channelUpdate" | lengthDelimited(channelUpdateCodec)) ::
         ("localShutdown" | optional(bool8, lengthDelimited(shutdownCodec))) ::
         ("remoteShutdown" | optional(bool8, lengthDelimited(shutdownCodec))) ::
-        ("closingFeerates" | optional(bool8, closingFeeratesCodec))).as[DATA_NORMAL]
+        ("closingFeerates" | optional(bool8, closingFeeratesCodec)) ::
+        ("spliceStatus" | provide[SpliceStatus](SpliceStatus.NoSplice))).as[DATA_NORMAL]
 
     val DATA_SHUTDOWN_05_Codec: Codec[DATA_SHUTDOWN] = (
       ("metaCommitments" | metaCommitmentsCodec) ::

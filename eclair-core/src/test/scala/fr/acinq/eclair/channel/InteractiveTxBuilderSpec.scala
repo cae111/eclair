@@ -133,8 +133,8 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
 
     val channelId = randomBytes32()
     val fundingScript = Script.write(Script.pay2wsh(Scripts.multiSig2of2(remoteParamsA.fundingPubKey, remoteParamsB.fundingPubKey)))
-    val fundingParamsA = InteractiveTxParams(channelId, isInitiator = true, fundingAmountA, fundingAmountB, fundingScript, lockTime, dustLimit, targetFeerate, requireConfirmedInputs)
-    val fundingParamsB = InteractiveTxParams(channelId, isInitiator = false, fundingAmountB, fundingAmountA, fundingScript, lockTime, dustLimit, targetFeerate, requireConfirmedInputs)
+    val fundingParamsA = InteractiveTxParams(channelId, isInitiator = true, fundingAmountA, fundingAmountB, None, fundingScript, lockTime, dustLimit, targetFeerate, requireConfirmedInputs)
+    val fundingParamsB = InteractiveTxParams(channelId, isInitiator = false, fundingAmountB, fundingAmountA, None, fundingScript, lockTime, dustLimit, targetFeerate, requireConfirmedInputs)
     val commitmentParamsA = Params(channelId, ChannelConfig.standard, channelFeatures, localParamsA, remoteParamsB, ChannelFlags.Public)
     val commitmentParamsB = Params(channelId, ChannelConfig.standard, channelFeatures, localParamsB, remoteParamsA, ChannelFlags.Public)
 
@@ -1468,7 +1468,7 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
     val nonInitiatorInput = TxAddInput(channelId, UInt64(11), parentTx, 2, 4294967293L)
     val nonInitiatorOutput = TxAddOutput(channelId, UInt64(33), 49999900 sat, hex"001444cb0c39f93ecc372b5851725bd29d865d333b10")
 
-    val initiatorParams = InteractiveTxParams(channelId, isInitiator = true, 200_000_000 sat, 200_000_000 sat, hex"0020297b92c238163e820b82486084634b4846b86a3c658d87b9384192e6bea98ec5", 120, 330 sat, FeeratePerKw(253 sat), RequireConfirmedInputs(forLocal = false, forRemote = false))
+    val initiatorParams = InteractiveTxParams(channelId, isInitiator = true, 200_000_000 sat, 200_000_000 sat, None, hex"0020297b92c238163e820b82486084634b4846b86a3c658d87b9384192e6bea98ec5", 120, 330 sat, FeeratePerKw(253 sat), RequireConfirmedInputs(forLocal = false, forRemote = false))
     val initiatorTx = SharedTransaction(List(initiatorInput), List(nonInitiatorInput).map(i => RemoteTxAddInput(i)), List(initiatorOutput, sharedOutput), List(nonInitiatorOutput).map(o => RemoteTxAddOutput(o)), lockTime = 120)
     assert(initiatorTx.localFees(initiatorParams) == 155.sat)
     val nonInitiatorParams = initiatorParams.copy(isInitiator = false)
@@ -1479,8 +1479,8 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
     assert(initiatorTx.buildUnsignedTx().txid == unsignedTx.txid)
     assert(nonInitiatorTx.buildUnsignedTx().txid == unsignedTx.txid)
 
-    val initiatorSigs = TxSignatures(channelId, unsignedTx, Seq(ScriptWitness(Seq(hex"68656c6c6f2074686572652c2074686973206973206120626974636f6e212121", hex"82012088a820add57dfe5277079d069ca4ad4893c96de91f88ffb981fdc6a2a34d5336c66aff87"))))
-    val nonInitiatorSigs = TxSignatures(channelId, unsignedTx, Seq(ScriptWitness(Seq(hex"304402207de9ba56bb9f641372e805782575ee840a899e61021c8b1572b3ec1d5b5950e9022069e9ba998915dae193d3c25cb89b5e64370e6a3a7755e7f31cf6d7cbc2a49f6d01", hex"034695f5b7864c580bf11f9f8cb1a94eb336f2ce9ef872d2ae1a90ee276c772484"))))
+    val initiatorSigs = TxSignatures(channelId, unsignedTx, Seq(ScriptWitness(Seq(hex"68656c6c6f2074686572652c2074686973206973206120626974636f6e212121", hex"82012088a820add57dfe5277079d069ca4ad4893c96de91f88ffb981fdc6a2a34d5336c66aff87"))), None)
+    val nonInitiatorSigs = TxSignatures(channelId, unsignedTx, Seq(ScriptWitness(Seq(hex"304402207de9ba56bb9f641372e805782575ee840a899e61021c8b1572b3ec1d5b5950e9022069e9ba998915dae193d3c25cb89b5e64370e6a3a7755e7f31cf6d7cbc2a49f6d01", hex"034695f5b7864c580bf11f9f8cb1a94eb336f2ce9ef872d2ae1a90ee276c772484"))), None)
     val initiatorSignedTx = FullySignedSharedTransaction(initiatorTx, initiatorSigs, nonInitiatorSigs)
     assert(initiatorSignedTx.feerate == FeeratePerKw(262 sat))
     val nonInitiatorSignedTx = FullySignedSharedTransaction(nonInitiatorTx, nonInitiatorSigs, initiatorSigs)

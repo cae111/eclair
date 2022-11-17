@@ -99,7 +99,12 @@ private class InteractiveTxFunder(replyTo: ActorRef[InteractiveTxFunder.Response
       // If we're the initiator, we need to pay the fees of the common fields of the transaction, even if we don't want
       // to contribute to the shared output. We create a non-zero amount here to ensure that bitcoind will fund the
       // fees for the shared output (because it would otherwise reject a txOut with an amount of zero).
-      fundingParams.localAmount.max(fundingParams.dustLimit)
+      val minAmount = fundingParams.localAmount.max(fundingParams.dustLimit)
+      purpose match {
+        // if splice, add cost of the input from the previous funding tx
+        case s: InteractiveTxBuilder.SpliceTx => minAmount + fundingParams.targetFeerate.feerate * TxIn.write(s.commitment.localCommit.commitTxAndRemoteSig.commitTx.tx.txIn.head).size
+        case _ => minAmount
+      }
     } else {
       fundingParams.localAmount
     }

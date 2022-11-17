@@ -294,7 +294,8 @@ private[channel] object ChannelCodecs3 {
         ("remoteInputs" | listOfN(uint16, remoteTxAddInputCodec)) ::
         ("localOutputs" | listOfN(uint16, lengthDelimited(txAddOutputCodec))) ::
         ("remoteOutputs" | listOfN(uint16, remoteTxAddOutputCodec)) ::
-        ("lockTime" | uint32)).as[SharedTransaction]
+        ("lockTime" | uint32) ::
+        ("commonInput" | provide(Option.empty[Multisig2of2Input]))).as[SharedTransaction]
 
     private val partiallySignedSharedTransactionCodec: Codec[PartiallySignedSharedTransaction] = (
       ("sharedTx" | sharedTransactionCodec) ::
@@ -321,6 +322,7 @@ private[channel] object ChannelCodecs3 {
         ("isInitiator" | bool8) ::
         ("localAmount" | satoshi) ::
         ("remoteAmount" | satoshi) ::
+        ("commonInput_opt" | provide(Option.empty[InputInfo])) ::
         ("fundingPubkeyScript" | lengthDelimited(bytes)) ::
         ("lockTime" | uint32) ::
         ("dustLimit" | satoshi) ::
@@ -442,7 +444,8 @@ private[channel] object ChannelCodecs3 {
         ("channelUpdate" | lengthDelimited(channelUpdateCodec)) ::
         ("localShutdown" | optional(bool8, lengthDelimited(shutdownCodec))) ::
         ("remoteShutdown" | optional(bool8, lengthDelimited(shutdownCodec))) ::
-        ("closingFeerates" | optional(bool8, closingFeeratesCodec))).as[DATA_NORMAL]
+        ("closingFeerates" | optional(bool8, closingFeeratesCodec)) ::
+        ("spliceStatus" | provide[SpliceStatus](SpliceStatus.NoSplice))).as[DATA_NORMAL]
 
     val DATA_SHUTDOWN_03_Codec: Codec[DATA_SHUTDOWN] = (
       ("metaCommitments" | metaCommitmentsCodec) ::
