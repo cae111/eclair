@@ -147,6 +147,7 @@ case class Commitment(localFundingStatus: LocalFundingStatus,
   val commitInput: InputInfo = localCommit.commitTxAndRemoteSig.commitTx.input
   val fundingTxId: ByteVector32 = commitInput.outPoint.txid
   val capacity: Satoshi = commitInput.txOut.amount
+  val confirmed: Boolean = localFundingStatus.isInstanceOf[LocalFundingStatus.ConfirmedFundingTx] && remoteFundingStatus == RemoteFundingStatus.Locked
 
   /** Channel reserve that applies to our funds. */
   def localChannelReserve(params: Params): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
@@ -957,6 +958,29 @@ case class MetaCommitments(params: Params,
     val remoteFundingKey = params.remoteParams.fundingPubKey
     val fundingScript = Script.write(Scripts.multiSig2of2(localFundingKey, remoteFundingKey))
     commitments.forall(_.commitInput.redeemScript == fundingScript)
+  }
+
+  /**
+   * When a commitment has been confirmed by both sides, we can prune previous commitments.
+   * TODO: merge this with pruneCommitments()
+   */
+  def eliminateSpliceCommitments()(implicit log: LoggingAdapter): MetaCommitments = {
+    // Note that:
+    // - we always prepend new commitments
+    // - we either rbf the initial commitment or spend subsequent (possibly unconfirmed) commitments
+    // Therefore we can:
+    // - remove commitments *to the left of the confirmed funding tx* that are double spent by the confirmed tx (NB: not implemented yet because this is only used for splices)
+    // - remove all commitments *to the right of the confirmed funding tx* because they are either double-spent (rbf) or confirmed (cpfp)
+    val unconfirmedCommitments = commitments.takeWhile(!_.confirmed)
+    val confirmedCommitments = commitments.dropWhile(!_.confirmed)
+    require(confirmedCommitments.nonEmpty, "there must always be a valid commitment")
+    val activeCommitment :: prunedCommitments = confirmedCommitments
+    val commitments1 = unconfirmedCommitments :+ activeCommitment
+    // NB: in case of RBF, we would also have to remove double spent commitments
+    if (prunedCommitments.nonEmpty) {
+      log.info(s"txid=${confirmedCommitments.head.fundingTxId} is now active, removed=${prunedCommitments.map(_.fundingTxId).mkString(",")} remaining=${commitments1.map(_.fundingTxId).mkString(",")}")
+    }
+    copy(commitments = commitments1)
   }
 
 }

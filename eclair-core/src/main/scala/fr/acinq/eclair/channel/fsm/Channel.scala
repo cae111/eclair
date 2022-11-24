@@ -20,6 +20,7 @@ import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter.{ClassicActorContextOps, actorRefAdapter}
 import akka.actor.{Actor, ActorContext, ActorRef, FSM, OneForOneStrategy, PossiblyHarmful, Props, Status, SupervisorStrategy, typed}
 import akka.event.Logging.MDC
+import com.softwaremill.quicklens.{ModifyPimp, QuicklensEach}
 import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Satoshi, SatoshiLong, Transaction}
 import fr.acinq.eclair.Features.DualFunding
@@ -833,6 +834,26 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
           stay() sending Warning(d.channelId, UnexpectedInteractiveTxMessage(d.channelId, msg).getMessage)
       }
 
+    case Event(w: WatchFundingConfirmedTriggered, d: DATA_NORMAL) =>
+      log.info(s"funding txid=${w.tx.txid} is confirmed by local")
+      val condition: Commitment => Boolean = _.fundingTxId == w.tx.txid // see https://github.com/softwaremill/quicklens/issues/41#issuecomment-364087405
+      val metaCommitments1 = d.metaCommitments
+        .modify(_.commitments.eachWhere(condition))
+        .using { commitment =>
+          watchFundingTx(commitment)
+          commitment.copy(localFundingStatus = LocalFundingStatus.ConfirmedFundingTx(w.tx))
+        }
+        .eliminateSpliceCommitments()
+      stay() using d.copy(metaCommitments = metaCommitments1) storing() sending SpliceConfirmed(d.channelId, w.tx.txid)
+
+    case Event(msg: SpliceConfirmed, d: DATA_NORMAL) =>
+      log.info(s"funding txid=${msg.fundingTxid} is confirmed by remote")
+      val condition: Commitment => Boolean = _.fundingTxId == msg.fundingTxid // see https://github.com/softwaremill/quicklens/issues/41#issuecomment-364087405
+      val metaCommitments1 = d.metaCommitments
+        .modify(_.commitments.eachWhere(condition).remoteFundingStatus).setTo(RemoteFundingStatus.Locked)
+        .eliminateSpliceCommitments()
+      stay() using d.copy(metaCommitments = metaCommitments1) storing()
+
     case Event(INPUT_DISCONNECTED, d: DATA_NORMAL) =>
       // we cancel the timer that would have made us send the enabled update after reconnection (flappy channel protection)
       cancelTimer(Reconnected.toString)
@@ -1193,6 +1214,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
     case Event(BITCOIN_FUNDING_TIMEOUT, d: DATA_CLOSING) => handleFundingTimeout(d)
 
     case Event(w: WatchFundingConfirmedTriggered, d: DATA_CLOSING) =>
+      // TODO: wrong in case of splices
       pruneCommitments(d.metaCommitments, w.tx) match {
         case Some(metaCommitments) =>
           if (d.metaCommitments.latest.fundingTxId == w.tx.txid) {

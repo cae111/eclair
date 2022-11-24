@@ -20,12 +20,14 @@ import akka.testkit.TestProbe
 import com.softwaremill.quicklens.ModifyPimp
 import fr.acinq.bitcoin.scalacompat.SatoshiLong
 import fr.acinq.eclair._
+import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher.{WatchFundingConfirmed, WatchFundingConfirmedTriggered}
 import fr.acinq.eclair.blockchain.fee._
 import fr.acinq.eclair.channel._
+import fr.acinq.eclair.channel.states.ChannelStateTestsTags.NoMaxHtlcValueInFlight
 import fr.acinq.eclair.channel.states.{ChannelStateTestsBase, ChannelStateTestsTags}
 import fr.acinq.eclair.wire.protocol._
-import org.scalatest.Outcome
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike
+import org.scalatest.{Outcome, Tag}
 
 /**
  * Created by PM on 05/07/2016.
@@ -52,7 +54,7 @@ class NormalSplicesStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLik
     withFixture(test.toNoArgTest(setup))
   }
 
-  test("recv CMD_SPLICE_IN") { f =>
+  def initiateSplice(f: FixtureParam) = {
     import f._
     val initialState = alice.stateData.asInstanceOf[DATA_NORMAL]
     assert(initialState.metaCommitments.latest.capacity == 1_500_000.sat)
@@ -93,6 +95,54 @@ class NormalSplicesStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLik
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].spliceStatus == SpliceStatus.NoSplice)
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].metaCommitments.latest.localCommit.spec.toLocal == 1_300_000_000.msat)
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].metaCommitments.latest.remoteCommit.spec.toLocal == 700_000_000.msat)
+  }
+
+  test("recv CMD_SPLICE_IN") { f =>
+    initiateSplice(f)
+  }
+
+  test("recv WatchFundingConfirmedTriggered with splice in progress", Tag(NoMaxHtlcValueInFlight)) { f =>
+    import f._
+
+    val sender = TestProbe()
+    // command for a large payment (larger than local balance pre-slice)
+    val cmd = CMD_ADD_HTLC(sender.ref, 1_000_000_000 msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, None, localOrigin(sender.ref))
+    // first attempt at payment fails (not enough balance)
+    alice ! cmd
+    sender.expectMsgType[RES_ADD_FAILED[_]]
+    alice2bob.expectNoMessage()
+
+    initiateSplice(f)
+    bob2alice.expectMsgType[Warning] // TODO: this is because non-initiator stops the InteractiveTx FSM right after having sent its signature
+    alice2blockchain.expectMsgType[WatchFundingConfirmed]
+    alice2blockchain.expectNoMessage()
+    alice ! WatchFundingConfirmedTriggered(BlockHeight(400000), 42, alice.stateData.asInstanceOf[DATA_NORMAL].metaCommitments.latest.localFundingStatus.signedTx_opt.get)
+    bob ! WatchFundingConfirmedTriggered(BlockHeight(400000), 42, alice.stateData.asInstanceOf[DATA_NORMAL].metaCommitments.latest.localFundingStatus.signedTx_opt.get)
+    alice2bob.expectMsgType[SpliceConfirmed]
+    alice2bob.forward(bob)
+    bob2alice.expectMsgType[SpliceConfirmed]
+    bob2alice.forward(alice)
+
+    // 2nd attempt works!
+    alice ! cmd
+    sender.expectMsgType[RES_SUCCESS[CMD_ADD_HTLC]]
+    alice2bob.expectMsgType[UpdateAddHtlc]
+    alice2bob.forward(bob)
+
+    alice ! CMD_SIGN()
+    alice2bob.expectMsgType[CommitSig]
+    alice2bob.forward(bob)
+    bob2alice.expectMsgType[RevokeAndAck]
+    bob2alice.forward(alice)
+  }
+
+  test("recv CMD_ADD_HTLC with splice in progress") { f =>
+    import f._
+    initiateSplice(f)
+    val sender = TestProbe()
+    alice ! CMD_ADD_HTLC(sender.ref, 500000 msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, None, localOrigin(sender.ref))
+    sender.expectMsgType[RES_SUCCESS[CMD_ADD_HTLC]]
+    alice2bob.expectMsgType[UpdateAddHtlc]
   }
 
 }
