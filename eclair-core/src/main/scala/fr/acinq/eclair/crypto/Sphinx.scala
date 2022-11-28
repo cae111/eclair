@@ -20,10 +20,12 @@ import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Crypto}
 import fr.acinq.eclair.wire.protocol._
 import grizzled.slf4j.Logging
-import scodec.Attempt
 import scodec.bits.ByteVector
+import scodec.{Attempt, Codec}
 
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.duration.DurationInt
 import scala.util.{Failure, Success, Try}
 
 /**
@@ -330,6 +332,89 @@ object Sphinx extends Logging {
       loop(packet, sharedSecrets)
     }
 
+  }
+
+  case class InvalidFatErrorPacket(hopPayloads: Seq[(PublicKey, FatError.HopPayload)], failingNode: PublicKey)
+
+  object FatErrorPacket {
+
+    import FatError._
+
+    private val payloadAndPadLength = 256
+    private val hopPayloadLength = 9
+    private val maxNumHop = 27
+    private val codec: Codec[FatError] = fatErrorCodec(payloadAndPadLength, hopPayloadLength, maxNumHop)
+
+    def create(sharedSecret: ByteVector32, failure: FailureMessage): ByteVector = {
+      val failurePayload = FailureMessageCodecs.failureOnionPayload(payloadAndPadLength).encode(failure).require.toByteVector
+      val hopPayload = HopPayload(ErrorSource, 0 millis)
+      val zeroPayloads = Seq.fill(maxNumHop)(ByteVector.fill(hopPayloadLength)(0))
+      val zeroHmacs = (maxNumHop.to(1, -1)).map(Seq.fill(_)(ByteVector32.Zeroes))
+      val plainError = codec.encode(FatError(failurePayload, zeroPayloads, zeroHmacs)).require.bytes
+      wrap(plainError, sharedSecret, hopPayload).get
+    }
+
+    private def computeHmacs(mac: Mac32, failurePayload: ByteVector, hopPayloads: Seq[ByteVector], hmacs: Seq[Seq[ByteVector32]], minNumHop: Int): Seq[ByteVector32] = {
+      val newHmacs = (minNumHop until maxNumHop).map(i => {
+        val y = maxNumHop - i
+        mac.mac(failurePayload ++
+          ByteVector.concat(hopPayloads.take(y)) ++
+          ByteVector.concat((0 until y - 1).map(j => hmacs(j)(i))))
+      })
+      newHmacs
+    }
+
+    def wrap(errorPacket: ByteVector, sharedSecret: ByteVector32, hopPayload: HopPayload): Try[ByteVector] = Try {
+      val um = generateKey("um", sharedSecret)
+      val error = codec.decode(errorPacket.bits).require.value
+      val hopPayloads = hopPayloadCodec.encode(hopPayload).require.bytes +: error.hopPayloads.dropRight(1)
+      val hmacs = computeHmacs(Hmac256(um), error.failurePayload, hopPayloads, error.hmacs, 0) +: error.hmacs.dropRight(1).map(_.drop(1))
+      val newError = codec.encode(FatError(error.failurePayload, hopPayloads, hmacs)).require.bytes
+      val key = generateKey("ammag", sharedSecret)
+      val stream = generateStream(key, newError.length.toInt)
+      newError xor stream
+    }
+
+    private def unwrap(errorPacket: ByteVector, sharedSecret: ByteVector32, minNumHop: Int): Try[(ByteVector, HopPayload)] = Try {
+      val key = generateKey("ammag", sharedSecret)
+      val stream = generateStream(key, errorPacket.length.toInt)
+      val error = codec.decode((errorPacket xor stream).bits).require.value
+      val um = generateKey("um", sharedSecret)
+      val shiftedHmacs = error.hmacs.tail.map(ByteVector32.Zeroes +: _) :+ Seq(ByteVector32.Zeroes)
+      val hmacs = computeHmacs(Hmac256(um), error.failurePayload, error.hopPayloads, shiftedHmacs, minNumHop)
+      require(hmacs == error.hmacs.head.drop(minNumHop), "Invalid HMAC")
+      val shiftedHopPayloads = error.hopPayloads.tail :+ ByteVector.fill(hopPayloadLength)(0)
+      val unwrapedError = FatError(error.failurePayload, shiftedHopPayloads, shiftedHmacs)
+      (codec.encode(unwrapedError).require.bytes,
+        hopPayloadCodec.decode(error.hopPayloads.head.bits).require.value)
+    }
+
+    def decrypt(errorPacket: ByteVector, sharedSecrets: Seq[(ByteVector32, PublicKey)]): Either[InvalidFatErrorPacket, DecryptedFailurePacket] = {
+      var packet = errorPacket
+      var minNumHop = 1
+      val hopPayloads = ArrayBuffer.empty[(PublicKey, HopPayload)]
+      for ((sharedSecret, nodeId) <- sharedSecrets) {
+        unwrap(packet, sharedSecret, minNumHop) match {
+          case Failure(_) => return Left(InvalidFatErrorPacket(hopPayloads.toSeq, nodeId))
+          case Success((unwrapedPacket, hopPayload)) =>
+            hopPayload.payloadType match {
+              case FatError.IntermediateHop =>
+                packet = unwrapedPacket
+                minNumHop += 1
+                hopPayloads += ((nodeId, hopPayload))
+              case FatError.ErrorSource =>
+                val failurePayload = codec.decode(unwrapedPacket.bits).require.value.failurePayload
+                FailureMessageCodecs.failureOnionPayload(payloadAndPadLength).decode(failurePayload.bits) match {
+                  case Attempt.Successful(failureMessage) =>
+                    return Right(DecryptedFailurePacket(nodeId, failureMessage.value))
+                  case Attempt.Failure(_) =>
+                    return Left(InvalidFatErrorPacket(hopPayloads.toSeq, nodeId))
+                }
+            }
+        }
+      }
+      Left(InvalidFatErrorPacket(hopPayloads.toSeq, sharedSecrets.last._2))
+    }
   }
 
   /**

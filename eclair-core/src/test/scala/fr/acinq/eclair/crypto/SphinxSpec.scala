@@ -21,10 +21,11 @@ import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.eclair.crypto.Sphinx.RouteBlinding.{BlindedRoute, BlindedRouteDetails}
 import fr.acinq.eclair.wire.protocol
 import fr.acinq.eclair.wire.protocol._
-import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, MilliSatoshiLong, ShortChannelId, UInt64, randomKey}
+import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, MilliSatoshiLong, ShortChannelId, UInt64, randomBytes, randomKey}
 import org.scalatest.funsuite.AnyFunSuite
 import scodec.bits._
 
+import scala.concurrent.duration.DurationInt
 import scala.util.Success
 
 /**
@@ -384,6 +385,63 @@ class SphinxSpec extends AnyFunSuite {
     val Success(DecryptedFailurePacket(pubkey, failure)) = FailurePacket.decrypt(error2, sharedSecrets)
     assert(pubkey == publicKeys(2))
     assert(failure == InvalidRealm)
+  }
+
+  test("decrypt fat error") {
+    val sharedSecrets = Seq(
+      hex"0101010101010101010101010101010101010101010101010101010101010101",
+      hex"0202020202020202020202020202020202020202020202020202020202020202",
+      hex"0303030303030303030303030303030303030303030303030303030303030303",
+      hex"0404040404040404040404040404040404040404040404040404040404040404",
+      hex"0505050505050505050505050505050505050505050505050505050505050505",
+    ).map(ByteVector32(_))
+
+    val dummyHopPayload = FatError.HopPayload(FatError.IntermediateHop, 0 millis)
+
+    val expected = DecryptedFailurePacket(publicKeys(2), InvalidOnionKey(ByteVector32.One))
+
+    val packet1 = FatErrorPacket.create(sharedSecrets(2), expected.failureMessage)
+    assert(packet1.length == 12599)
+
+    val Right(decrypted1) = FatErrorPacket.decrypt(packet1, (2 to 4).map(i => (sharedSecrets(i), publicKeys(i))))
+    assert(decrypted1 == expected)
+
+    val Success(packet2) = FatErrorPacket.wrap(packet1, sharedSecrets(1), dummyHopPayload)
+    assert(packet2.length == 12599)
+
+    val Right(decrypted2) = FatErrorPacket.decrypt(packet2, (1 to 4).map(i => (sharedSecrets(i), publicKeys(i))))
+    assert(decrypted2 == expected)
+
+    val Success(packet3) = FatErrorPacket.wrap(packet2, sharedSecrets(0), dummyHopPayload)
+    assert(packet3.length == 12599)
+
+    val Right(decrypted3) = FatErrorPacket.decrypt(packet3, (0 to 4).map(i => (sharedSecrets(i), publicKeys(i))))
+    assert(decrypted3 == expected)
+  }
+
+  test("decrypt fat error with random data") {
+    val sharedSecrets = Seq(
+      hex"0101010101010101010101010101010101010101010101010101010101010101",
+      hex"0202020202020202020202020202020202020202020202020202020202020202",
+      hex"0303030303030303030303030303030303030303030303030303030303030303",
+      hex"0404040404040404040404040404040404040404040404040404040404040404",
+      hex"0505050505050505050505050505050505050505050505050505050505050505",
+    ).map(ByteVector32(_))
+
+    // publicKeys(2) creates an invalid random packet, or publicKeys(1) tries to shift blame by pretending to receive random data from publicKeys(2)
+    val packet1 = randomBytes(12599)
+
+    val hopPayload2 = FatError.HopPayload(FatError.IntermediateHop, 50 millis)
+    val Success(packet2) = FatErrorPacket.wrap(packet1, sharedSecrets(1), hopPayload2)
+    assert(packet2.length == 12599)
+
+    val hopPayload3 = FatError.HopPayload(FatError.IntermediateHop, 100 millis)
+    val Success(packet3) = FatErrorPacket.wrap(packet2, sharedSecrets(0), hopPayload3)
+    assert(packet3.length == 12599)
+
+    val Left(decryptionError) = FatErrorPacket.decrypt(packet3, (0 to 4).map(i => (sharedSecrets(i), publicKeys(i))))
+    val expected = InvalidFatErrorPacket(Seq((publicKeys(0), hopPayload3), (publicKeys(1), hopPayload2)), publicKeys(2))
+    assert(decryptionError == expected)
   }
 
   test("create blinded route (reference test vector)") {

@@ -140,7 +140,7 @@ object FailureMessageCodecs {
     }, (_: FailureMessage).code)
   )
 
-  private def failureOnionPayload(payloadAndPadLength: Int): Codec[FailureMessage] = Codec(
+  def failureOnionPayload(payloadAndPadLength: Int): Codec[FailureMessage] = Codec(
     encoder = f => variableSizeBytes(uint16, failureMessageCodec).encode(f).flatMap(bits => {
       val payloadLength = bits.bytes.length - 2
       val padLen = payloadAndPadLength - payloadLength
