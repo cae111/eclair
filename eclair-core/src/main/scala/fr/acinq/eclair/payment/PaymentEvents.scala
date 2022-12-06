@@ -136,7 +136,7 @@ case class LocalFailure(amount: MilliSatoshi, route: Seq[Hop], t: Throwable) ext
 case class RemoteFailure(amount: MilliSatoshi, route: Seq[Hop], e: Sphinx.DecryptedFailurePacket) extends PaymentFailure
 
 /** A remote node failed the payment but we couldn't decrypt the failure (e.g. a malicious node tampered with the message). */
-case class UnreadableRemoteFailure(amount: MilliSatoshi, route: Seq[Hop]) extends PaymentFailure
+case class UnreadableRemoteFailure(amount: MilliSatoshi, route: Seq[Hop], e: Sphinx.InvalidFatErrorPacket) extends PaymentFailure
 
 object PaymentFailure {
 
@@ -217,9 +217,12 @@ object PaymentFailure {
       }
     case RemoteFailure(_, hops, Sphinx.DecryptedFailurePacket(nodeId, _)) =>
       ignoreNodeOutgoingChannel(nodeId, hops, ignore)
-    case UnreadableRemoteFailure(_, hops) =>
-      // We don't know which node is sending garbage, let's blacklist all nodes except the one we are directly connected to and the final recipient.
-      val blacklist = hops.map(_.nextNodeId).drop(1).dropRight(1).toSet
+    case UnreadableRemoteFailure(_, hops, e) =>
+      // We don't know which node is sending garbage, let's blacklist both nodes, but not the one we are directly connected to or the final recipient.
+      val blacklist = Set(
+        if (e.hopPayloads.length > 1) Some(e.hopPayloads.last._1) else None,
+        if (e.hopPayloads.nonEmpty && e.failingNode != hops.last.nextNodeId) Some(e.failingNode) else None,
+      ).flatten
       ignore ++ blacklist
     case LocalFailure(_, hops, _) => hops.headOption match {
       case Some(hop: ChannelHop) =>

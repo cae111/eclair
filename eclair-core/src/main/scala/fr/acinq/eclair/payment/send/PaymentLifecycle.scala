@@ -168,15 +168,15 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
 
   private def handleRemoteFail(d: WaitingForComplete, fail: UpdateFailHtlc) = {
     import d._
-    ((Sphinx.FailurePacket.decrypt(fail.reason, sharedSecrets) match {
-      case success@Success(e) =>
+    val result = Sphinx.FatErrorPacket.decrypt(fail.reason, sharedSecrets)
+    result match {
+      case Right(e) =>
         Metrics.PaymentError.withTag(Tags.Failure, Tags.FailureType(RemoteFailure(d.c.finalPayload.amount, Nil, e))).increment()
-        success
-      case failure@Failure(_) =>
-        Metrics.PaymentError.withTag(Tags.Failure, Tags.FailureType(UnreadableRemoteFailure(d.c.finalPayload.amount, Nil))).increment()
-        failure
-    }) match {
-      case res@Success(Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) =>
+      case Left(e) =>
+        Metrics.PaymentError.withTag(Tags.Failure, Tags.FailureType(UnreadableRemoteFailure(d.c.finalPayload.amount, Nil, e))).increment()
+    }
+    result match {
+      case Right(Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) =>
         // We have discovered some liquidity information with this payment: we update the router accordingly.
         val stoppedRoute = d.route.stopAt(nodeId)
         if (stoppedRoute.hops.length > 1) {
@@ -191,38 +191,43 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
             }
           case _ => // other errors should not be used for liquidity issues
         }
-        res
-      case res => res
-    }) match {
-      case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) if nodeId == c.targetNodeId =>
+      case Left(Sphinx.InvalidFatErrorPacket(reachedNodes, _)) =>
+        if (reachedNodes.length > 1) {
+          val lastReachedNode = reachedNodes.last._1
+          val stoppedRoute = d.route.stopAt(lastReachedNode)
+          router ! Router.RouteCouldRelay(stoppedRoute)
+        }
+    }
+    result match {
+      case Right(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) if nodeId == c.targetNodeId =>
         // if destination node returns an error, we fail the payment immediately
         log.warning(s"received an error message from target nodeId=$nodeId, failing the payment (failure=$failureMessage)")
         myStop(c, Left(PaymentFailed(id, paymentHash, failures :+ RemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e))))
       case res if failures.size + 1 >= c.maxAttempts =>
         // otherwise we never try more than maxAttempts, no matter the kind of error returned
         val failure = res match {
-          case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) =>
+          case Right(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) =>
             log.info(s"received an error message from nodeId=$nodeId (failure=$failureMessage)")
             failureMessage match {
               case failureMessage: Update => handleUpdate(nodeId, failureMessage, d)
               case _ =>
             }
             RemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e)
-          case Failure(t) =>
-            log.warning(s"cannot parse returned error ${fail.reason.toHex} with sharedSecrets=$sharedSecrets: ${t.getMessage}")
-            UnreadableRemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route))
+          case Left(e) =>
+            log.warning(s"cannot parse returned error: $e")
+            UnreadableRemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e)
         }
         log.warning(s"too many failed attempts, failing the payment")
         myStop(c, Left(PaymentFailed(id, paymentHash, failures :+ failure)))
-      case Failure(t) =>
-        log.warning(s"cannot parse returned error: ${t.getMessage}, route=${route.printNodes()}")
-        val failure = UnreadableRemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route))
+      case Left(e) =>
+        log.warning(s"cannot parse returned error: $e, route=${route.printNodes()}")
+        val failure = UnreadableRemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e)
         retry(failure, d)
-      case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage: Node)) =>
+      case Right(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage: Node)) =>
         log.info(s"received 'Node' type error message from nodeId=$nodeId, trying to route around it (failure=$failureMessage)")
         val failure = RemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e)
         retry(failure, d)
-      case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage: Update)) =>
+      case Right(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage: Update)) =>
         log.info(s"received 'Update' type error message from nodeId=$nodeId, retrying payment (failure=$failureMessage)")
         val failure = RemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e)
         if (Announcements.checkSig(failureMessage.update, nodeId)) {
@@ -249,7 +254,7 @@ class PaymentLifecycle(nodeParams: NodeParams, cfg: SendPaymentConfig, router: A
               goto(WAITING_FOR_ROUTE) using WaitingForRoute(c, failures :+ failure, ignore + nodeId)
           }
         }
-      case Success(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) =>
+      case Right(e@Sphinx.DecryptedFailurePacket(nodeId, failureMessage)) =>
         log.info(s"received an error message from nodeId=$nodeId, trying to use a different channel (failure=$failureMessage)")
         val failure = RemoteFailure(d.c.finalPayload.amount, cfg.fullRoute(route), e)
         retry(failure, d)

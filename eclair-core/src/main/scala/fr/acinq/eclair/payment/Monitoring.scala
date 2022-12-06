@@ -125,7 +125,7 @@ object Monitoring {
       def apply(pf: PaymentFailure): String = pf match {
         case LocalFailure(_, _, t) => t.getClass.getSimpleName
         case RemoteFailure(_, _, e) => e.failureMessage.getClass.getSimpleName
-        case UnreadableRemoteFailure(_, _) => "UnreadableRemoteFailure"
+        case UnreadableRemoteFailure(_, _, _) => "UnreadableRemoteFailure"
       }
     }
 
