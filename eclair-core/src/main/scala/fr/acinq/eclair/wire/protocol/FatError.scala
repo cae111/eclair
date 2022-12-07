@@ -52,8 +52,9 @@ object FatError {
         .xmap(pair => pair._1 +: pair._2, seq => (seq.head, seq.tail))
     }
 
-  def fatErrorCodec(payloadAndPadLength: Int = 256, hopPayloadLength: Int = 9, maxHop: Int = 27): Codec[FatError] = (
-    ("failure_payload" | bytes(payloadAndPadLength + 4)) ::
-      ("hop_payloads" | listOfN(provide(maxHop), bytes(hopPayloadLength)).xmap[Seq[ByteVector]](_.toSeq, _.toList)) ::
-      ("hmacs" | hmacsCodec(maxHop))).as[FatError].complete
+  def fatErrorCodec(totalLength: Int, hopPayloadLength: Int, maxNumHop: Int): Codec[FatError] = {
+    val metadataLength = maxNumHop * hopPayloadLength + (maxNumHop * (maxNumHop + 1)) / 2 * 32
+    (("failure_payload" | bytes(totalLength - metadataLength)) ::
+      ("hop_payloads" | listOfN(provide(maxNumHop), bytes(hopPayloadLength)).xmap[Seq[ByteVector]](_.toSeq, _.toList)) ::
+      ("hmacs" | hmacsCodec(maxNumHop))).as[FatError].complete}
 }

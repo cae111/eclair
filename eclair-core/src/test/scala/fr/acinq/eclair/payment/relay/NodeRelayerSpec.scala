@@ -615,7 +615,7 @@ class NodeRelayerSpec extends ScalaTestWithActorTestKit(ConfigFactory.load("appl
     val payFSM = mockPayFSM.expectMessageType[akka.actor.ActorRef]
     router.expectMessageType[RouteRequest]
 
-    val failures = RemoteFailure(outgoingAmount, Nil, Sphinx.DecryptedFailurePacket(outgoingNodeId, FinalIncorrectHtlcAmount(42 msat))) :: UnreadableRemoteFailure(outgoingAmount, Nil) :: Nil
+    val failures = RemoteFailure(outgoingAmount, Nil, Sphinx.DecryptedFailurePacket(outgoingNodeId, FinalIncorrectHtlcAmount(42 msat))) :: UnreadableRemoteFailure(outgoingAmount, Nil, ???) :: Nil
     payFSM ! PaymentFailed(relayId, incomingMultiPart.head.add.paymentHash, failures)
 
     incomingMultiPart.foreach { p =>

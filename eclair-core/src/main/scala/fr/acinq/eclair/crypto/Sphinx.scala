@@ -20,8 +20,8 @@ import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Crypto}
 import fr.acinq.eclair.wire.protocol._
 import grizzled.slf4j.Logging
+import scodec.Attempt
 import scodec.bits.ByteVector
-import scodec.{Attempt, Codec}
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
@@ -343,14 +343,14 @@ object Sphinx extends Logging {
     private val payloadAndPadLength = 256
     private val hopPayloadLength = 9
     private val maxNumHop = 27
-    private val codec: Codec[FatError] = fatErrorCodec(payloadAndPadLength, hopPayloadLength, maxNumHop)
+    private val totalLength = 12599
 
     def create(sharedSecret: ByteVector32, failure: FailureMessage): ByteVector = {
       val failurePayload = FailureMessageCodecs.failureOnionPayload(payloadAndPadLength).encode(failure).require.toByteVector
       val hopPayload = HopPayload(ErrorSource, 0 millis)
       val zeroPayloads = Seq.fill(maxNumHop)(ByteVector.fill(hopPayloadLength)(0))
       val zeroHmacs = (maxNumHop.to(1, -1)).map(Seq.fill(_)(ByteVector32.Zeroes))
-      val plainError = codec.encode(FatError(failurePayload, zeroPayloads, zeroHmacs)).require.bytes
+      val plainError = fatErrorCodec(totalLength, hopPayloadLength, maxNumHop).encode(FatError(failurePayload, zeroPayloads, zeroHmacs)).require.bytes
       wrap(plainError, sharedSecret, hopPayload).get
     }
 
@@ -366,10 +366,10 @@ object Sphinx extends Logging {
 
     def wrap(errorPacket: ByteVector, sharedSecret: ByteVector32, hopPayload: HopPayload): Try[ByteVector] = Try {
       val um = generateKey("um", sharedSecret)
-      val error = codec.decode(errorPacket.bits).require.value
+      val error = fatErrorCodec(errorPacket.length.toInt, hopPayloadLength, maxNumHop).decode(errorPacket.bits).require.value
       val hopPayloads = hopPayloadCodec.encode(hopPayload).require.bytes +: error.hopPayloads.dropRight(1)
-      val hmacs = computeHmacs(Hmac256(um), error.failurePayload, hopPayloads, error.hmacs, 0) +: error.hmacs.dropRight(1).map(_.drop(1))
-      val newError = codec.encode(FatError(error.failurePayload, hopPayloads, hmacs)).require.bytes
+      val hmacs = computeHmacs(Hmac256(um), error.failurePayload, hopPayloads, error.hmacs.map(_.drop(1)), 0) +: error.hmacs.dropRight(1).map(_.drop(1))
+      val newError = fatErrorCodec(errorPacket.length.toInt, hopPayloadLength, maxNumHop).encode(FatError(error.failurePayload, hopPayloads, hmacs)).require.bytes
       val key = generateKey("ammag", sharedSecret)
       val stream = generateStream(key, newError.length.toInt)
       newError xor stream
@@ -378,20 +378,20 @@ object Sphinx extends Logging {
     private def unwrap(errorPacket: ByteVector, sharedSecret: ByteVector32, minNumHop: Int): Try[(ByteVector, HopPayload)] = Try {
       val key = generateKey("ammag", sharedSecret)
       val stream = generateStream(key, errorPacket.length.toInt)
-      val error = codec.decode((errorPacket xor stream).bits).require.value
+      val error = fatErrorCodec(errorPacket.length.toInt, hopPayloadLength, maxNumHop).decode((errorPacket xor stream).bits).require.value
       val um = generateKey("um", sharedSecret)
       val shiftedHmacs = error.hmacs.tail.map(ByteVector32.Zeroes +: _) :+ Seq(ByteVector32.Zeroes)
-      val hmacs = computeHmacs(Hmac256(um), error.failurePayload, error.hopPayloads, shiftedHmacs, minNumHop)
+      val hmacs = computeHmacs(Hmac256(um), error.failurePayload, error.hopPayloads, error.hmacs.tail, minNumHop)
       require(hmacs == error.hmacs.head.drop(minNumHop), "Invalid HMAC")
       val shiftedHopPayloads = error.hopPayloads.tail :+ ByteVector.fill(hopPayloadLength)(0)
       val unwrapedError = FatError(error.failurePayload, shiftedHopPayloads, shiftedHmacs)
-      (codec.encode(unwrapedError).require.bytes,
+      (fatErrorCodec(errorPacket.length.toInt, hopPayloadLength, maxNumHop).encode(unwrapedError).require.bytes,
         hopPayloadCodec.decode(error.hopPayloads.head.bits).require.value)
     }
 
     def decrypt(errorPacket: ByteVector, sharedSecrets: Seq[(ByteVector32, PublicKey)]): Either[InvalidFatErrorPacket, DecryptedFailurePacket] = {
       var packet = errorPacket
-      var minNumHop = 1
+      var minNumHop = 0
       val hopPayloads = ArrayBuffer.empty[(PublicKey, HopPayload)]
       for ((sharedSecret, nodeId) <- sharedSecrets) {
         unwrap(packet, sharedSecret, minNumHop) match {
@@ -403,7 +403,7 @@ object Sphinx extends Logging {
                 minNumHop += 1
                 hopPayloads += ((nodeId, hopPayload))
               case FatError.ErrorSource =>
-                val failurePayload = codec.decode(unwrapedPacket.bits).require.value.failurePayload
+                val failurePayload = fatErrorCodec(errorPacket.length.toInt, hopPayloadLength, maxNumHop).decode(unwrapedPacket.bits).require.value.failurePayload
                 FailureMessageCodecs.failureOnionPayload(payloadAndPadLength).decode(failurePayload.bits) match {
                   case Attempt.Successful(failureMessage) =>
                     return Right(DecryptedFailurePacket(nodeId, failureMessage.value))

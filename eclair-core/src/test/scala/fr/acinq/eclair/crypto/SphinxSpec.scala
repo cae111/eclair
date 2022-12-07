@@ -22,10 +22,14 @@ import fr.acinq.eclair.crypto.Sphinx.RouteBlinding.{BlindedRoute, BlindedRouteDe
 import fr.acinq.eclair.wire.protocol
 import fr.acinq.eclair.wire.protocol._
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, MilliSatoshiLong, ShortChannelId, UInt64, randomBytes, randomKey}
+import org.json4s.JsonAST._
+import org.json4s.jackson.JsonMethods
 import org.scalatest.funsuite.AnyFunSuite
 import scodec.bits._
 
+import java.io.File
 import scala.concurrent.duration.DurationInt
+import scala.io.Source
 import scala.util.Success
 
 /**
@@ -442,6 +446,24 @@ class SphinxSpec extends AnyFunSuite {
     val Left(decryptionError) = FatErrorPacket.decrypt(packet3, (0 to 4).map(i => (sharedSecrets(i), publicKeys(i))))
     val expected = InvalidFatErrorPacket(Seq((publicKeys(0), hopPayload3), (publicKeys(1), hopPayload2)), publicKeys(2))
     assert(decryptionError == expected)
+  }
+
+  test("fat error test vector") {
+    val src = Source.fromFile(new File(getClass.getResource(s"/fat_error.json").getFile))
+    try {
+      val testVector = JsonMethods.parse(src.mkString).asInstanceOf[JObject].values
+      val encodedFailureMessage = ByteVector.fromValidHex(testVector("encodedFailureMessage").asInstanceOf[String])
+      val expected = FailureMessageCodecs.failureOnionPayload(0).decode(encodedFailureMessage.bits).require.value
+      val hops = testVector("hops").asInstanceOf[List[Map[String, String]]]
+      val sharedSecrets = hops.map(hop => ByteVector32(ByteVector.fromValidHex(hop("sharedSecret")))).reverse
+      val encryptedMessage = hops.map(hop => ByteVector.fromValidHex(hop("encryptedMessage"))).last
+      val nodeIds = (1 to 5).map(_ => randomKey().publicKey)
+      val Right(DecryptedFailurePacket(originNode, failureMessage)) = FatErrorPacket.decrypt(encryptedMessage, sharedSecrets.zip(nodeIds))
+      assert(originNode == nodeIds.last)
+      assert(failureMessage == expected)
+    } finally {
+      src.close()
+    }
   }
 
   test("create blinded route (reference test vector)") {
