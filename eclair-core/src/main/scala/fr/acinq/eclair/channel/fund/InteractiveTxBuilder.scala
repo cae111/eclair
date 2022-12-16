@@ -110,9 +110,23 @@ object InteractiveTxBuilder {
                                  lockTime: Long,
                                  dustLimit: Satoshi,
                                  targetFeerate: FeeratePerKw,
-                                 requireConfirmedInputs: RequireConfirmedInputs) {
-    // if splice, we need to add the pre-existing capacity
-    val fundingAmount: Satoshi = localAmount + remoteAmount + commonInput_opt.map(_.txOut.amount).getOrElse(0 sat)
+                                 requireConfirmedInputs: RequireConfirmedInputs,
+                                 localSpliceOut_opt: Option[TxOut] = None,
+                                 remoteSpliceOut_opt: Option[TxOut] = None) {
+    val previousAmount: Satoshi = commonInput_opt.map(_.txOut.amount).getOrElse(0 sat)
+
+    val localSpliceOutAmount: Satoshi = localSpliceOut_opt.map(_.amount).getOrElse(0 sat)
+    val remoteSpliceOutAmount: Satoshi = remoteSpliceOut_opt.map(_.amount).getOrElse(0 sat)
+    // splice-out are special, because there is potentially no additional funding, so the mining fees must be taken from the previous funding amount
+    // if there is one splice-out, the side that does it pays; if both sides do a splice-out, the initiator pays
+    // TODO: weight is hardcoded and is the same whether there are one or two splices, it should be fully computed using the actual weight of each splice output
+    val localSpliceOutFee: Satoshi = if (localSpliceOut_opt.isDefined && (remoteSpliceOut_opt.isEmpty || isInitiator)) Transactions.weight2fee(targetFeerate, 600) else 0 sat
+    val remoteSpliceOutFee: Satoshi = if (remoteSpliceOut_opt.isDefined && (localSpliceOut_opt.isEmpty || !isInitiator)) Transactions.weight2fee(targetFeerate, 600) else 0 sat
+
+    val fundingAmount: Satoshi = localAmount + remoteAmount +
+      previousAmount - // if this is a splice, we add the pre-existing capacity
+      localSpliceOutAmount - localSpliceOutFee - // we remove splice-out amount and fees
+      remoteSpliceOutAmount - remoteSpliceOutFee
     // BOLT 2: MUST set `feerate` greater than or equal to 25/24 times the `feerate` of the previously constructed transaction, rounded down.
     val minNextFeerate: FeeratePerKw = targetFeerate * 25 / 24
   }
@@ -554,11 +568,14 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
       return Left(InvalidCompleteInteractiveTx(fundingParams.channelId))
     }
 
-    val localAmountOut = sharedTx.localOutputs.filter(_.pubkeyScript != fundingParams.fundingPubkeyScript).map(_.amount).sum + fundingParams.localAmount
-    val remoteAmountOut = sharedTx.remoteOutputs.filter(_.pubkeyScript != fundingParams.fundingPubkeyScript).map(_.amount).sum + fundingParams.remoteAmount
-    if (sharedTx.localAmountIn < localAmountOut || sharedTx.remoteAmountIn < remoteAmountOut) {
-      log.warn("invalid interactive tx: input amount is too small (localIn={}, localOut={}, remoteIn={}, remoteOut={})", sharedTx.localAmountIn, localAmountOut, sharedTx.remoteAmountIn, remoteAmountOut)
-      return Left(InvalidCompleteInteractiveTx(fundingParams.channelId))
+    // we only do the following check in non-splice scenario
+    if (sharedTx.commonInput_opt.isEmpty) {
+      val localAmountOut = sharedTx.localOutputs.filter(_.pubkeyScript != fundingParams.fundingPubkeyScript).map(_.amount).sum + fundingParams.localAmount
+      val remoteAmountOut = sharedTx.remoteOutputs.filter(_.pubkeyScript != fundingParams.fundingPubkeyScript).map(_.amount).sum + fundingParams.remoteAmount
+      if (sharedTx.localAmountIn < localAmountOut || sharedTx.remoteAmountIn < remoteAmountOut) {
+        log.warn("invalid interactive tx: input amount is too small (localIn={}, localOut={}, remoteIn={}, remoteOut={})", sharedTx.localAmountIn, localAmountOut, sharedTx.remoteAmountIn, remoteAmountOut)
+        return Left(InvalidCompleteInteractiveTx(fundingParams.channelId))
+      }
     }
 
     // The transaction isn't signed yet, and segwit witnesses can be arbitrarily low (e.g. when using an OP_1 script),
@@ -589,8 +606,12 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
       case None =>
         val minimumFee = Transactions.weight2fee(fundingParams.targetFeerate, tx.weight())
         if (sharedTx.fees < minimumFee) {
-          log.warn("invalid interactive tx: below the target feerate (target={}, actual={})", fundingParams.targetFeerate, Transactions.fee2rate(sharedTx.fees, tx.weight()))
-          return Left(InvalidCompleteInteractiveTx(fundingParams.channelId))
+          if (fundingParams.localSpliceOutAmount > 0.sat || fundingParams.remoteSpliceOutAmount > 0.sat) {
+            log.info("feerate is below target, but we tolerate for splice-outs (target={}, actual={})", fundingParams.targetFeerate, Transactions.fee2rate(sharedTx.fees, tx.weight()))
+          } else {
+            log.warn("invalid interactive tx: below the target feerate (target={}, actual={})", fundingParams.targetFeerate, Transactions.fee2rate(sharedTx.fees, tx.weight()))
+            return Left(InvalidCompleteInteractiveTx(fundingParams.channelId))
+          }
         }
     }
 
@@ -610,8 +631,8 @@ private class InteractiveTxBuilder(replyTo: ActorRef[InteractiveTxBuilder.Respon
     val fundingTx = completeTx.buildUnsignedTx()
     Funding.makeCommitTxsWithoutHtlcs(keyManager, commitmentParams,
       fundingAmount = fundingParams.fundingAmount,
-      toLocal = fundingParams.localAmount - localPushAmount + remotePushAmount + purpose.previousLocalBalance,
-      toRemote = fundingParams.remoteAmount - remotePushAmount + localPushAmount + purpose.previousRemoteBalance,
+      toLocal = fundingParams.localAmount - localPushAmount + remotePushAmount + purpose.previousLocalBalance - fundingParams.localSpliceOutAmount - fundingParams.localSpliceOutFee,
+      toRemote = fundingParams.remoteAmount - remotePushAmount + localPushAmount + purpose.previousRemoteBalance - fundingParams.remoteSpliceOutAmount - fundingParams.remoteSpliceOutFee,
       purpose.commitTxFeerate, fundingTx.hash, fundingOutputIndex, purpose.remotePerCommitmentPoint, commitmentIndex = purpose.common.localCommitIndex) match {
       case Left(cause) =>
         replyTo ! RemoteFailure(cause)

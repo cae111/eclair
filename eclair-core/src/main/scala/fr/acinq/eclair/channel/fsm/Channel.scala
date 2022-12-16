@@ -22,7 +22,7 @@ import akka.actor.{Actor, ActorContext, ActorRef, FSM, OneForOneStrategy, Possib
 import akka.event.Logging.MDC
 import com.softwaremill.quicklens.{ModifyPimp, QuicklensEach}
 import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.bitcoin.scalacompat.{ByteVector32, Satoshi, SatoshiLong, Transaction}
+import fr.acinq.bitcoin.scalacompat.{ByteVector32, Satoshi, SatoshiLong, Transaction, TxOut}
 import fr.acinq.eclair.Features.DualFunding
 import fr.acinq.eclair.Logs.LogCategory
 import fr.acinq.eclair._
@@ -711,17 +711,18 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
           goto(NORMAL) using d.copy(channelUpdate = channelUpdate1) storing()
       }
 
-    case Event(cmd: CMD_SPLICE_IN, d: DATA_NORMAL) =>
+    case Event(cmd: CMD_SPLICE, d: DATA_NORMAL) =>
       val replyTo = if (cmd.replyTo == ActorRef.noSender) sender() else cmd.replyTo
       d.spliceStatus match {
         case SpliceStatus.NoSplice =>
           if (d.metaCommitments.hasNoPendingHtlcsOrFeeUpdate && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
-            log.info(s"initiating splice with local.in.amount=${cmd.additionalLocalFunding} local.in.push=${cmd.pushAmount}")
+            log.info(s"initiating splice with local.in.amount=${cmd.additionalLocalFunding} local.in.push=${cmd.pushAmount} out.amount=${cmd.spliceOut_opt.map(_.amount).sum}")
             val spliceInit = SpliceInit(d.channelId,
               lockTime = nodeParams.currentBlockHeight.toLong,
               feerate = nodeParams.onChainFeeConf.feeEstimator.getFeeratePerKw(target = nodeParams.onChainFeeConf.feeTargets.fundingBlockTarget),
               fundingContribution = cmd.additionalLocalFunding,
-              pushAmount = cmd.pushAmount)
+              pushAmount = cmd.pushAmount,
+              spliceOut_opt = cmd.spliceOut_opt)
             stay() using d.copy(spliceStatus = SpliceStatus.SpliceRequested(cmd.copy(replyTo = replyTo), spliceInit)) sending spliceInit
           } else {
             log.warning("cannot do splice")
@@ -739,7 +740,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
         case SpliceStatus.NoSplice =>
           if (d.metaCommitments.hasNoPendingHtlcsOrFeeUpdate && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
             log.info(s"accepting splice with remote.in.amount=${msg.fundingContribution} remote.in.push=${msg.pushAmount}")
-            val spliceAck = SpliceAck(d.channelId, fundingContribution = 0.sat, pushAmount = 0.msat) // only remote contributes to the splice
+            val spliceAck = SpliceAck(d.channelId, fundingContribution = 0.sat, pushAmount = 0.msat, spliceOut_opt = None) // only remote contributes to the splice
             val parentCommitments = d.metaCommitments.latest
             val fundingParams = InteractiveTxParams(
               channelId = d.channelId,
@@ -752,6 +753,8 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
               dustLimit = parentCommitments.localParams.dustLimit.max(d.metaCommitments.params.remoteParams.dustLimit),
               targetFeerate = msg.feerate,
               requireConfirmedInputs = RequireConfirmedInputs(forLocal = false, forRemote = false), // TODO: revisit this
+              localSpliceOut_opt = spliceAck.spliceOut_opt,
+              remoteSpliceOut_opt = msg.spliceOut_opt
             )
             val txBuilder = context.spawnAnonymous(InteractiveTxBuilder(
               nodeParams, fundingParams,
@@ -788,6 +791,8 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
             dustLimit = d.metaCommitments.params.localParams.dustLimit.max(d.metaCommitments.params.remoteParams.dustLimit),
             targetFeerate = init.feerate,
             requireConfirmedInputs = RequireConfirmedInputs(forLocal = false, forRemote = false), // TODO: revisit this
+            localSpliceOut_opt = cmd.spliceOut_opt.map(s => TxOut(s.amount, s.pubKeyScript)),
+            remoteSpliceOut_opt = msg.spliceOut_opt
           )
           val txBuilder = context.spawnAnonymous(InteractiveTxBuilder(
             nodeParams, fundingParams,
@@ -1758,7 +1763,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
     case Event(WatchFundingSpentTriggered(tx), d: DATA_WAIT_FOR_REMOTE_PUBLISH_FUTURE_COMMITMENT) => handleRemoteSpentFuture(tx, d)
 
     case Event(WatchFundingSpentTriggered(tx), d: PersistentChannelData) =>
- if (d.metaCommitments.commitments.map(_.fundingTxId).contains(tx.txid)) {
+      if (d.metaCommitments.commitments.map(_.fundingTxId).contains(tx.txid)) {
         // if the spending tx is itself a funding tx, this is a splice and there is nothing to do
         stay()
       } else {

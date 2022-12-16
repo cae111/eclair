@@ -327,7 +327,10 @@ private[channel] object ChannelCodecs3 {
         ("lockTime" | uint32) ::
         ("dustLimit" | satoshi) ::
         ("targetFeerate" | feeratePerKw) ::
-        ("requireConfirmedInputs" | (("forLocal" | bool8) :: ("forRemote" | bool8)).as[RequireConfirmedInputs])).as[InteractiveTxParams]
+        ("requireConfirmedInputs" | (("forLocal" | bool8) :: ("forRemote" | bool8)).as[RequireConfirmedInputs]) ::
+        ("localSpliceOut_opt" | provide(Option.empty[TxOut])) ::
+        ("remoteSpliceOut_opt" | provide(Option.empty[TxOut]))
+      ).as[InteractiveTxParams]
 
     val metaCommitmentsCodec: Codec[MetaCommitments] = commitmentsCodec
       .map(commitments => MetaCommitments(commitments))

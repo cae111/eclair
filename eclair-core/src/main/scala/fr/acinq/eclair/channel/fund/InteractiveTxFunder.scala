@@ -95,13 +95,14 @@ private class InteractiveTxFunder(replyTo: ActorRef[InteractiveTxFunder.Response
   }
 
   def start(): Behavior[Command] = {
-    val toFund = if (fundingParams.isInitiator) {
+    val toFund = if (fundingParams.isInitiator && fundingParams.localSpliceOutAmount == 0.sat) {
       // If we're the initiator, we need to pay the fees of the common fields of the transaction, even if we don't want
       // to contribute to the shared output. We create a non-zero amount here to ensure that bitcoind will fund the
       // fees for the shared output (because it would otherwise reject a txOut with an amount of zero).
       val minAmount = fundingParams.localAmount.max(fundingParams.dustLimit)
       purpose match {
         // if splice, add cost of the input from the previous funding tx
+        // if this is a splice-out, fees will be paid from the initiator's balance
         case s: InteractiveTxBuilder.SpliceTx => minAmount + fundingParams.targetFeerate.feerate * TxIn.write(s.commitment.localCommit.commitTxAndRemoteSig.commitTx.tx.txIn.head).size
         case _ => minAmount
       }
@@ -111,8 +112,18 @@ private class InteractiveTxFunder(replyTo: ActorRef[InteractiveTxFunder.Response
     require(toFund >= 0.sat, "funding amount cannot be negative")
     log.debug("contributing {} to interactive-tx construction", toFund)
     if (toFund == 0.sat) {
-      // We're not the initiator and we don't want to contribute to the funding transaction.
-      replyTo ! FundingContributions(Nil, Nil)
+      val fundingContributions = if (fundingParams.isInitiator) {
+        // The initiator is responsible for adding the shared output.
+        val fundingOutput = TxAddOutput(fundingParams.channelId, UInt64(0), fundingParams.fundingAmount, fundingParams.fundingPubkeyScript)
+        // initiator and no contribution : has to be a splice-out
+        require(fundingParams.localSpliceOut_opt.isDefined)
+        val spliceOutOutput = fundingParams.localSpliceOut_opt.toList.map(txOut => TxAddOutput(fundingParams.channelId, UInt64(2), txOut.amount, txOut.publicKeyScript))
+        FundingContributions(inputs = Nil, outputs = fundingOutput +: spliceOutOutput)
+      } else {
+        // We're not the initiator and we don't want to contribute to the funding transaction.
+        FundingContributions(Nil, Nil)
+      }
+      replyTo ! fundingContributions
       Behaviors.stopped
     } else {
       // We always double-spend all our previous inputs. It's technically overkill because we only really need to double

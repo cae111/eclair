@@ -19,14 +19,14 @@ package fr.acinq.eclair.wire.protocol
 import com.google.common.base.Charsets
 import com.google.common.net.InetAddresses
 import fr.acinq.bitcoin.scalacompat.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.bitcoin.scalacompat.{ByteVector32, ByteVector64, Satoshi, SatoshiLong, ScriptWitness, Transaction}
+import fr.acinq.bitcoin.scalacompat.{ByteVector32, ByteVector64, Satoshi, SatoshiLong, ScriptWitness, Transaction, TxOut}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
-import fr.acinq.eclair.channel.{ChannelFlags, ChannelType}
+import fr.acinq.eclair.channel.{ChannelFlags, ChannelType, SpliceOut}
 import fr.acinq.eclair.payment.relay.Relayer
 import fr.acinq.eclair.wire.protocol.ChannelReadyTlv.ShortChannelIdTlv
-import fr.acinq.eclair.{Alias, BlockHeight, CltvExpiry, CltvExpiryDelta, Feature, Features, InitFeature, MilliSatoshi, MilliSatoshiLong, RealShortChannelId, ShortChannelId, TimestampSecond, UInt64, isAsciiPrintable}
 import fr.acinq.eclair.wire.protocol.CommitSigTlv.AlternativeCommitSig
 import fr.acinq.eclair.wire.protocol.TxSignaturesTlv.PreviousFundingTxSig
+import fr.acinq.eclair.{Alias, BlockHeight, CltvExpiry, CltvExpiryDelta, Feature, Features, InitFeature, MilliSatoshi, MilliSatoshiLong, RealShortChannelId, ShortChannelId, TimestampSecond, UInt64, isAsciiPrintable}
 import scodec.bits.ByteVector
 
 import java.net.{Inet4Address, Inet6Address, InetAddress}
@@ -153,27 +153,35 @@ object TxAbort {
 }
 
 case class SpliceInit(channelId: ByteVector32,
-                     lockTime: Long,
-                     feerate: FeeratePerKw,
-                     tlvStream: TlvStream[SpliceInitTlv] = TlvStream.empty) extends InteractiveTxMessage with HasChannelId {
+                      lockTime: Long,
+                      feerate: FeeratePerKw,
+                      tlvStream: TlvStream[SpliceInitTlv] = TlvStream.empty) extends InteractiveTxMessage with HasChannelId {
   val fundingContribution: Satoshi = tlvStream.get[InteractiveTxTlv.SharedOutputContributionTlv].map(_.amount).getOrElse(0 sat)
   val pushAmount: MilliSatoshi = tlvStream.get[InteractiveTxTlv.PushAmountTlv].map(_.amount).getOrElse(0 msat)
+  val spliceOut_opt: Option[TxOut] = tlvStream.get[InteractiveTxTlv.SpliceOutOutputTlv].map(_.output)
 }
 
 object SpliceInit {
-  def apply(channelId: ByteVector32, lockTime: Long, feerate: FeeratePerKw, fundingContribution: Satoshi, pushAmount: MilliSatoshi): SpliceInit =
-    SpliceInit(channelId, lockTime, feerate, TlvStream[SpliceInitTlv](InteractiveTxTlv.SharedOutputContributionTlv(fundingContribution), InteractiveTxTlv.PushAmountTlv(pushAmount)))
+  def apply(channelId: ByteVector32, lockTime: Long, feerate: FeeratePerKw, fundingContribution: Satoshi, pushAmount: MilliSatoshi, spliceOut_opt: Option[SpliceOut]): SpliceInit =
+    SpliceInit(channelId, lockTime, feerate, TlvStream[SpliceInitTlv](
+      InteractiveTxTlv.SharedOutputContributionTlv(fundingContribution) +:
+        InteractiveTxTlv.PushAmountTlv(pushAmount) +:
+        spliceOut_opt.map(s => InteractiveTxTlv.SpliceOutOutputTlv(TxOut(s.amount, s.pubKeyScript))).toList))
 }
 
 case class SpliceAck(channelId: ByteVector32,
-                    tlvStream: TlvStream[SpliceAckTlv] = TlvStream.empty) extends InteractiveTxMessage with HasChannelId {
+                     tlvStream: TlvStream[SpliceAckTlv] = TlvStream.empty) extends InteractiveTxMessage with HasChannelId {
   val fundingContribution: Satoshi = tlvStream.get[InteractiveTxTlv.SharedOutputContributionTlv].map(_.amount).getOrElse(0 sat)
   val pushAmount: MilliSatoshi = tlvStream.get[InteractiveTxTlv.PushAmountTlv].map(_.amount).getOrElse(0 msat)
+  val spliceOut_opt: Option[TxOut] = tlvStream.get[InteractiveTxTlv.SpliceOutOutputTlv].map(_.output)
 }
 
 object SpliceAck {
-  def apply(channelId: ByteVector32, fundingContribution: Satoshi, pushAmount: MilliSatoshi): SpliceAck =
-    SpliceAck(channelId, TlvStream[SpliceAckTlv](InteractiveTxTlv.SharedOutputContributionTlv(fundingContribution), InteractiveTxTlv.PushAmountTlv(pushAmount)))
+  def apply(channelId: ByteVector32, fundingContribution: Satoshi, pushAmount: MilliSatoshi, spliceOut_opt: Option[SpliceOut]): SpliceAck =
+    SpliceAck(channelId, TlvStream[SpliceAckTlv](
+      InteractiveTxTlv.SharedOutputContributionTlv(fundingContribution) +:
+        InteractiveTxTlv.PushAmountTlv(pushAmount) +:
+        spliceOut_opt.map(s => InteractiveTxTlv.SpliceOutOutputTlv(TxOut(s.amount, s.pubKeyScript))).toList))
 }
 
 case class SpliceConfirmed(channelId: ByteVector32,
