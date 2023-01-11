@@ -537,6 +537,7 @@ final case class DATA_CLOSING(commitments: Commitments,
                               fundingTx: Option[UnconfirmedFundingTx],
                               waitingSince: BlockHeight, // how long since we initiated the closing
                               alternativeCommitments: List[DualFundingTx], // commitments we signed that spend a different funding output
+                              finalScriptPubKey: ByteVector, // where to send all on-chain funds
                               mutualCloseProposed: List[ClosingTx], // all exchanged closing sigs are flattened, we use this only to keep track of what publishable tx they have
                               mutualClosePublished: List[ClosingTx] = Nil,
                               localCommitPublished: Option[LocalCommitPublished] = None,

@@ -1085,7 +1085,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
           rollbackDualFundingTxs(otherFundingTxs)
           val commitTx = commitments1.fullySignedLocalCommitTx(keyManager).tx
           val localCommitPublished = Closing.LocalClose.claimCommitTxOutputs(keyManager, commitments1, commitTx, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf)
-          val d1 = DATA_CLOSING(commitments1, None, d.waitingSince, alternativeCommitments = Nil, mutualCloseProposed = Nil, localCommitPublished = Some(localCommitPublished))
+          val d1 = DATA_CLOSING(commitments1, None, d.waitingSince, alternativeCommitments = Nil, finalScriptPubKey = commitments1.localParams.defaultFinalScriptPubKey, mutualCloseProposed = Nil, localCommitPublished = Some(localCommitPublished))
           stay() using d1 storing() calling doPublish(localCommitPublished, commitments1)
         case None =>
           if (d.commitments.fundingTxId == w.tx.txid) {

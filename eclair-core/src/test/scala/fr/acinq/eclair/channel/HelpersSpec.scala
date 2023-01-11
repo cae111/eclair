@@ -259,6 +259,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = tx1 :: tx2 :: tx3 :: Nil,
         mutualClosePublished = tx2 :: tx3 :: Nil,
         localCommitPublished = None,
@@ -275,6 +276,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
         localCommitPublished = Some(LocalCommitPublished(
@@ -298,6 +300,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
         localCommitPublished = Some(LocalCommitPublished(
@@ -321,6 +324,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
         localCommitPublished = Some(LocalCommitPublished(
@@ -350,6 +354,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
         localCommitPublished = Some(LocalCommitPublished(
@@ -379,6 +384,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
         localCommitPublished = Some(LocalCommitPublished(
@@ -414,6 +420,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
         localCommitPublished = None,
@@ -436,6 +443,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
         localCommitPublished = None,
@@ -458,6 +466,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
         localCommitPublished = Some(LocalCommitPublished(
@@ -506,6 +515,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
         fundingTx = None,
         waitingSince = BlockHeight(0),
         alternativeCommitments = Nil,
+        finalScriptPubKey = commitments.localParams.defaultFinalScriptPubKey,
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
         localCommitPublished = Some(LocalCommitPublished(
