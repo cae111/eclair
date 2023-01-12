@@ -1039,8 +1039,8 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
           log.info("got valid settlement for htlc={}, recalculating htlc transactions", c.id)
 
           val localCommitPublished1 = d.localCommitPublished.map(localCommitPublished => localCommitPublished.copy(htlcTxs = Closing.LocalClose.claimHtlcOutputs(keyManager, commitments1)))
-          val remoteCommitPublished1 = d.remoteCommitPublished.map(remoteCommitPublished => remoteCommitPublished.copy(claimHtlcTxs = Closing.RemoteClose.claimHtlcOutputs(keyManager, commitments1, d.finalScriptPubKey, commitments1.remoteCommit, nodeParams.onChainFeeConf.feeEstimator)))
-          val nextRemoteCommitPublished1 = d.nextRemoteCommitPublished.map(remoteCommitPublished => remoteCommitPublished.copy(claimHtlcTxs = Closing.RemoteClose.claimHtlcOutputs(keyManager, commitments1, d.finalScriptPubKey, commitments1.nextRemoteCommit_opt.get, nodeParams.onChainFeeConf.feeEstimator)))
+          val remoteCommitPublished1 = d.remoteCommitPublished.map(remoteCommitPublished => remoteCommitPublished.copy(claimHtlcTxs = Closing.RemoteClose.claimHtlcOutputs(keyManager, commitments1, commitments1.remoteCommit, nodeParams.onChainFeeConf.feeEstimator, d.finalScriptPubKey)))
+          val nextRemoteCommitPublished1 = d.nextRemoteCommitPublished.map(remoteCommitPublished => remoteCommitPublished.copy(claimHtlcTxs = Closing.RemoteClose.claimHtlcOutputs(keyManager, commitments1, commitments1.nextRemoteCommit_opt.get, nodeParams.onChainFeeConf.feeEstimator, d.finalScriptPubKey)))
 
           def republish(): Unit = {
             localCommitPublished1.foreach(lcp => doPublish(lcp, commitments1))
@@ -1085,7 +1085,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
               d.alternativeCommitments.filterNot(_.commitments.fundingTxId == w.tx.txid).map(_.fundingTx)
           rollbackDualFundingTxs(otherFundingTxs)
           val commitTx = commitments1.fullySignedLocalCommitTx(keyManager).tx
-          val localCommitPublished = Closing.LocalClose.claimCommitTxOutputs(keyManager, commitments1, d.finalScriptPubKey, commitTx, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf)
+          val localCommitPublished = Closing.LocalClose.claimCommitTxOutputs(keyManager, commitments1, commitTx, nodeParams.currentBlockHeight, nodeParams.onChainFeeConf, d.finalScriptPubKey)
           val d1 = DATA_CLOSING(commitments1, None, d.waitingSince, alternativeCommitments = Nil, finalScriptPubKey = d.finalScriptPubKey, mutualCloseProposed = Nil, localCommitPublished = Some(localCommitPublished))
           stay() using d1 storing() calling doPublish(localCommitPublished, commitments1)
         case None =>
@@ -1150,7 +1150,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
         }
       }
       val revokedCommitPublished1 = d.revokedCommitPublished.map { rev =>
-        val (rev1, penaltyTxs) = Closing.RevokedClose.claimHtlcTxOutputs(keyManager, d.commitments, d.finalScriptPubKey, rev, tx, nodeParams.onChainFeeConf.feeEstimator)
+        val (rev1, penaltyTxs) = Closing.RevokedClose.claimHtlcTxOutputs(keyManager, d.commitments, rev, tx, nodeParams.onChainFeeConf.feeEstimator, d.finalScriptPubKey)
         penaltyTxs.foreach(claimTx => txPublisher ! PublishFinalTx(claimTx, claimTx.fee, None))
         penaltyTxs.foreach(claimTx => blockchain ! WatchOutputSpent(self, tx.txid, claimTx.input.outPoint.index.toInt, hints = Set(claimTx.tx.txid)))
         rev1
@@ -1164,7 +1164,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
       val d1 = d.copy(
         localCommitPublished = d.localCommitPublished.map(localCommitPublished => {
           // If the tx is one of our HTLC txs, we now publish a 3rd-stage claim-htlc-tx that claims its output.
-          val (localCommitPublished1, claimHtlcTx_opt) = Closing.LocalClose.claimHtlcDelayedOutput(localCommitPublished, keyManager, d.commitments, d.finalScriptPubKey, tx, nodeParams.onChainFeeConf.feeEstimator, nodeParams.onChainFeeConf.feeTargets)
+          val (localCommitPublished1, claimHtlcTx_opt) = Closing.LocalClose.claimHtlcDelayedOutput(localCommitPublished, keyManager, d.commitments, tx, nodeParams.onChainFeeConf.feeEstimator, nodeParams.onChainFeeConf.feeTargets, d.finalScriptPubKey)
           claimHtlcTx_opt.foreach(claimHtlcTx => {
             txPublisher ! PublishFinalTx(claimHtlcTx, claimHtlcTx.fee, None)
             blockchain ! WatchTxConfirmed(self, claimHtlcTx.tx.txid, nodeParams.channelConf.minDepthBlocks)
