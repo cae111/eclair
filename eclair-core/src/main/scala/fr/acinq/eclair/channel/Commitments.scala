@@ -86,9 +86,10 @@ case class Commitments(channelId: ByteVector32,
 
   import Commitments._
 
-  require(channelFeatures.paysDirectlyToWallet == localParams.walletStaticPaymentBasepoint.isDefined, s"localParams.walletStaticPaymentBasepoint must be defined only for commitments that pay directly to our wallet (channel features: $channelFeatures")
+  require(channelFeatures.paysDirectlyToWallet == localParams.walletStaticPaymentBasepoint.isDefined, s"localParams.walletStaticPaymentBasepoint must be defined only for commitments that pay directly to our wallet (channel features: $channelFeatures)")
   require(channelFeatures.hasFeature(DualFunding) == localParams.requestedChannelReserve_opt.isEmpty, "custom local channel reserve is incompatible with dual-funded channels")
   require(channelFeatures.hasFeature(DualFunding) == remoteParams.requestedChannelReserve_opt.isEmpty, "custom remote channel reserve is incompatible with dual-funded channels")
+  //require(channelFeatures.hasFeature(Features.UpfrontShutdownScript) == localParams.defaultFinalScriptPubKey.isDefined, s"localParams.defaultFinalScriptPubKey must be defined only for commitments that set upfront_shutdown_script (channel features: $channelFeatures)")
 
   def nextRemoteCommit_opt: Option[RemoteCommit] = remoteNextCommitInfo.swap.toOption.map(_.nextRemoteCommit)
 
@@ -101,8 +102,8 @@ case class Commitments(channelId: ByteVector32,
     // to check whether shutdown_any_segwit is active we check features in local and remote parameters, which are negotiated each time we connect to our peer.
     val allowAnySegwit = Features.canUseFeature(localParams.initFeatures, remoteParams.initFeatures, Features.ShutdownAnySegwit)
     (channelFeatures.hasFeature(Features.UpfrontShutdownScript), scriptPubKey) match {
-      case (true, Some(script)) if script != localParams.defaultFinalScriptPubKey => Left(InvalidFinalScript(channelId))
-      case (true, _) => Right(localParams.defaultFinalScriptPubKey)
+      case (true, Some(script)) if script != localParams.defaultFinalScriptPubKey.get => Left(InvalidFinalScript(channelId))
+      case (true, _) => Right(localParams.defaultFinalScriptPubKey.get)
       case (false, Some(script)) if !Closing.MutualClose.isValidFinalScriptPubkey(script, allowAnySegwit) => Left(InvalidFinalScript(channelId))
       case (false, Some(script)) => Right(script)
       case (false, None) => Right(defaultScriptPubKey)

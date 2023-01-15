@@ -61,7 +61,7 @@ private[channel] object ChannelCodecs3 {
       (cf: ChannelFeatures) => Features(cf.features.map(f => f -> FeatureSupport.Mandatory).toMap).toByteVector // we encode features as mandatory, by convention
     )
 
-    def localParamsCodec(channelFeatures: ChannelFeatures): Codec[LocalParams] = (
+    def localParams3Codec(channelFeatures: ChannelFeatures): Codec[ChannelTypes3.LocalParams] = (
       ("nodeId" | publicKey) ::
         ("channelPath" | keyPathCodec) ::
         ("dustLimit" | satoshi) ::
@@ -73,7 +73,9 @@ private[channel] object ChannelCodecs3 {
         ("isInitiator" | bool8) ::
         ("defaultFinalScriptPubKey" | lengthDelimited(bytes)) ::
         ("walletStaticPaymentBasepoint" | optional(provide(channelFeatures.paysDirectlyToWallet), publicKey)) ::
-        ("features" | combinedFeaturesCodec)).as[LocalParams]
+        ("features" | combinedFeaturesCodec)).as[ChannelTypes3.LocalParams]
+
+    def localParamsCodec(channelFeatures: ChannelFeatures): Codec[LocalParams] = localParams3Codec(channelFeatures).xmap(lp3 => lp3.migrate(), lp => ChannelTypes3.LocalParams(lp))
 
     def remoteParamsCodec(channelFeatures: ChannelFeatures): Codec[RemoteParams] = (
       ("nodeId" | publicKey) ::
@@ -255,11 +257,11 @@ private[channel] object ChannelCodecs3 {
 
     val spentMapCodec: Codec[Map[OutPoint, Transaction]] = mapCodec(outPointCodec, txCodec)
 
-    val commitmentsCodec: Codec[Commitments] = (
+    val commitments3Codec: Codec[ChannelTypes3.Commitments] = (
       ("channelId" | bytes32) ::
         ("channelConfig" | channelConfigCodec) ::
         (("channelFeatures" | channelFeaturesCodec) >>:~ { channelFeatures =>
-          ("localParams" | localParamsCodec(channelFeatures)) ::
+          ("localParams" | localParams3Codec(channelFeatures)) ::
             ("remoteParams" | remoteParamsCodec(channelFeatures)) ::
             ("channelFlags" | channelflags) ::
             ("localCommit" | localCommitCodec) ::
@@ -272,7 +274,14 @@ private[channel] object ChannelCodecs3 {
             ("remoteNextCommitInfo" | either(bool8, waitingForRevocationCodec, publicKey)) ::
             ("commitInput" | inputInfoCodec) ::
             ("remotePerCommitmentSecrets" | byteAligned(ShaChain.shaChainCodec))
-        })).as[Commitments]
+        })).as[ChannelTypes3.Commitments]
+
+    val commitmentsCodec: Codec[Commitments] = commitments3Codec.xmap((c3 => c3.migrate()), {
+      c =>
+        ChannelTypes3.Commitments(c.channelId, c.channelConfig, c.channelFeatures,
+          ChannelTypes3.LocalParams(c.localParams), c.remoteParams, c.channelFlags, c.localCommit, c.remoteCommit, c.localChanges, c.remoteChanges, c.localNextHtlcId, c.remoteNextHtlcId,
+          c.originChannels, c.remoteNextCommitInfo, c.commitInput, c.remotePerCommitmentSecrets)
+    })
 
     private val remoteTxAddInputCodec: Codec[RemoteTxAddInput] = (
       ("serialId" | uint64) ::
@@ -445,7 +454,7 @@ private[channel] object ChannelCodecs3 {
         ("bestUnpublishedClosingTx_opt" | optional(bool8, closingTxCodec))).as[DATA_NEGOTIATING]
 
     val DATA_CLOSING_05_Codec: Codec[DATA_CLOSING] = (
-      ("commitments" | commitmentsCodec) ::
+      ("commitments" | commitments3Codec) ::
         ("fundingTx_opt" | optional(bool8, txCodec)) ::
         ("waitingSince" | int64.as[BlockHeight]) ::
         ("mutualCloseProposed" | listOfN(uint16, closingTxCodec)) ::
@@ -456,7 +465,7 @@ private[channel] object ChannelCodecs3 {
         ("futureRemoteCommitPublished" | optional(bool8, remoteCommitPublishedCodec)) ::
         ("revokedCommitPublished" | listOfN(uint16, revokedCommitPublishedCodec))).map {
       case commitments :: fundingTx_opt :: waitingSince :: mutualCloseProposed :: mutualClosePublished :: localCommitPublished :: remoteCommitPublished :: nextRemoteCommitPublished :: futureRemoteCommitPublished :: revokedCommitPublished :: HNil =>
-        DATA_CLOSING(commitments, fundingTx_opt.map(tx => SingleFundedUnconfirmedFundingTx(tx)), waitingSince, Nil, commitments.localParams.defaultFinalScriptPubKey, mutualCloseProposed, mutualClosePublished, localCommitPublished, remoteCommitPublished, nextRemoteCommitPublished, futureRemoteCommitPublished, revokedCommitPublished)
+        DATA_CLOSING(commitments.migrate(), fundingTx_opt.map(tx => SingleFundedUnconfirmedFundingTx(tx)), waitingSince, Nil, commitments.localParams.defaultFinalScriptPubKey, mutualCloseProposed, mutualClosePublished, localCommitPublished, remoteCommitPublished, nextRemoteCommitPublished, futureRemoteCommitPublished, revokedCommitPublished)
     }.decodeOnly
 
     val unconfirmedFundingTxCodec: Codec[UnconfirmedFundingTx] = discriminated[UnconfirmedFundingTx].by(uint8)
@@ -464,7 +473,7 @@ private[channel] object ChannelCodecs3 {
       .typecase(0x02, signedSharedTransactionCodec.as[DualFundedUnconfirmedFundingTx])
 
     val DATA_CLOSING_0d_Codec: Codec[DATA_CLOSING] = (
-      ("commitments" | commitmentsCodec) ::
+      ("commitments" | commitments3Codec) ::
         ("fundingTx_opt" | optional(bool8, unconfirmedFundingTxCodec)) ::
         ("waitingSince" | blockHeight) ::
         ("alternativeCommitments" | listOfN(uint16, dualFundingTxCodec)) ::
@@ -476,7 +485,7 @@ private[channel] object ChannelCodecs3 {
         ("futureRemoteCommitPublished" | optional(bool8, remoteCommitPublishedCodec)) ::
         ("revokedCommitPublished" | listOfN(uint16, revokedCommitPublishedCodec))).map {
       case commitments :: fundingTx_opt :: waitingSince :: alternativeCommitments :: mutualCloseProposed :: mutualClosePublished :: localCommitPublished :: remoteCommitPublished :: nextRemoteCommitPublished :: futureRemoteCommitPublished :: revokedCommitPublished :: HNil =>
-        DATA_CLOSING(commitments, fundingTx_opt, waitingSince, alternativeCommitments, commitments.localParams.defaultFinalScriptPubKey, mutualCloseProposed, mutualClosePublished, localCommitPublished, remoteCommitPublished, nextRemoteCommitPublished, futureRemoteCommitPublished, revokedCommitPublished)
+        DATA_CLOSING(commitments.migrate(), fundingTx_opt, waitingSince, alternativeCommitments, commitments.localParams.defaultFinalScriptPubKey, mutualCloseProposed, mutualClosePublished, localCommitPublished, remoteCommitPublished, nextRemoteCommitPublished, futureRemoteCommitPublished, revokedCommitPublished)
     }.decodeOnly
 
     val DATA_CLOSING_0e_Codec: Codec[DATA_CLOSING] = (

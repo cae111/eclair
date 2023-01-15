@@ -76,7 +76,7 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
       // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script if this feature is not used
       // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
       val localShutdownScript = if (Features.canUseFeature(input.localParams.initFeatures, input.remoteInit.features, Features.UpfrontShutdownScript)) {
-        input.localParams.defaultFinalScriptPubKey
+        input.localParams.defaultFinalScriptPubKey.get
       } else {
         ByteVector.empty
       }
@@ -118,7 +118,7 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
           log.info("will use fundingMinDepth={}", minimumDepth)
           // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script if this feature is not used.
           // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
-          val localShutdownScript = if (Features.canUseFeature(d.initFundee.localParams.initFeatures, d.initFundee.remoteInit.features, Features.UpfrontShutdownScript)) d.initFundee.localParams.defaultFinalScriptPubKey else ByteVector.empty
+          val localShutdownScript = if (Features.canUseFeature(d.initFundee.localParams.initFeatures, d.initFundee.remoteInit.features, Features.UpfrontShutdownScript)) d.initFundee.localParams.defaultFinalScriptPubKey.get else ByteVector.empty
           val accept = AcceptChannel(temporaryChannelId = open.temporaryChannelId,
             dustLimitSatoshis = d.initFundee.localParams.dustLimit,
             maxHtlcValueInFlightMsat = UInt64(d.initFundee.localParams.maxHtlcValueInFlightMsat.toLong),

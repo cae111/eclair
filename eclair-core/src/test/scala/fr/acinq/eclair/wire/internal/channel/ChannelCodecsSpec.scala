@@ -261,7 +261,7 @@ object ChannelCodecsSpec {
     htlcMinimum = 10000 msat,
     toSelfDelay = CltvExpiryDelta(144),
     maxAcceptedHtlcs = 50,
-    defaultFinalScriptPubKey = ByteVector.empty,
+    defaultFinalScriptPubKey = None,
     walletStaticPaymentBasepoint = None,
     isInitiator = true,
     initFeatures = Features.empty)
