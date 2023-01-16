@@ -26,7 +26,7 @@ import fr.acinq.eclair.Logs.LogCategory
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.OnChainWallet.MakeFundingTxResponse
 import fr.acinq.eclair.blockchain._
-import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher
+import fr.acinq.eclair.blockchain.bitcoind.{OnchainAddressManager, ZmqWatcher}
 import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher._
 import fr.acinq.eclair.blockchain.bitcoind.rpc.BitcoinCoreClient
 import fr.acinq.eclair.channel.Commitments.PostRevocationAction
@@ -1623,6 +1623,14 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
           case _: TransientChannelData => None
         }
         context.system.eventStream.publish(ChannelStateChanged(self, nextStateData.channelId, peer, remoteNodeId, state, nextState, commitments_opt))
+        if (nextState == CLOSING) {
+          nextStateData match {
+            case closing: DATA_CLOSING =>
+              log.warning(s"${context.system.name} $state $nextState renew ${closing.finalScriptPubKey}")
+              context.system.eventStream.publish(OnchainAddressManager.Renew(closing.finalScriptPubKey))
+            case _ => ()
+          }
+        }
       }
 
       if (nextState == CLOSED) {

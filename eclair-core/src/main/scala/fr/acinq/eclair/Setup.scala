@@ -26,7 +26,7 @@ import fr.acinq.bitcoin.scalacompat.{Block, ByteVector32, Satoshi, Script}
 import fr.acinq.eclair.Setup.Seeds
 import fr.acinq.eclair.balance.{BalanceActor, ChannelsListener}
 import fr.acinq.eclair.blockchain._
-import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher
+import fr.acinq.eclair.blockchain.bitcoind.{OnchainAddressManager, ZmqWatcher}
 import fr.acinq.eclair.blockchain.bitcoind.rpc.{BasicBitcoinJsonRPCClient, BatchingBitcoinJsonRPCClient, BitcoinCoreClient, BitcoinJsonRPCAuthMethod}
 import fr.acinq.eclair.blockchain.bitcoind.zmq.ZMQActor
 import fr.acinq.eclair.blockchain.fee._
@@ -355,6 +355,7 @@ class Setup(val datadir: File,
       balanceActor = system.spawn(BalanceActor(nodeParams.db, bitcoinClient, channelsListener, nodeParams.balanceCheckInterval), name = "balance-actor")
 
       postman = system.spawn(Behaviors.supervise(Postman(switchboard.toTyped)).onFailure(typed.SupervisorStrategy.restart), name = "postman")
+      _ = system.spawn(Behaviors.supervise(OnchainAddressManager(nodeParams.chainHash, bitcoinClient, finalScriptPubKey)).onFailure(typed.SupervisorStrategy.restart), name = "onchain-address-manager")
 
       kit = Kit(
         nodeParams = nodeParams,
