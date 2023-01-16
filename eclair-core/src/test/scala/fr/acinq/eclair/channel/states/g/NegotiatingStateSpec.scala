@@ -63,11 +63,11 @@ class NegotiatingStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     bob2alice.forward(alice, bobShutdown)
     awaitCond(alice.stateName == NEGOTIATING)
     if (alice.stateData.asInstanceOf[PersistentChannelData].commitments.channelFeatures.hasFeature(Features.UpfrontShutdownScript)) {
-      assert(alice.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.defaultFinalScriptPubKey.contains(aliceShutdown.scriptPubKey))
+      assert(alice.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.upfrontShutdownScript_opt.contains(aliceShutdown.scriptPubKey))
     }
     awaitCond(bob.stateName == NEGOTIATING)
     if (bob.stateData.asInstanceOf[PersistentChannelData].commitments.channelFeatures.hasFeature(Features.UpfrontShutdownScript)) {
-      assert(bob.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.defaultFinalScriptPubKey.contains(bobShutdown.scriptPubKey))
+      assert(bob.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.upfrontShutdownScript_opt.contains(bobShutdown.scriptPubKey))
     }
   }
 
@@ -82,11 +82,11 @@ class NegotiatingStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike 
     alice2bob.forward(bob, aliceShutdown)
     awaitCond(alice.stateName == NEGOTIATING)
     if (alice.stateData.asInstanceOf[PersistentChannelData].commitments.channelFeatures.hasFeature(Features.UpfrontShutdownScript)) {
-      assert(alice.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.defaultFinalScriptPubKey.contains(aliceShutdown.scriptPubKey))
+      assert(alice.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.upfrontShutdownScript_opt.contains(aliceShutdown.scriptPubKey))
     }
     awaitCond(bob.stateName == NEGOTIATING)
     if (bob.stateData.asInstanceOf[PersistentChannelData].commitments.channelFeatures.hasFeature(Features.UpfrontShutdownScript)) {
-      assert(bob.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.defaultFinalScriptPubKey.contains(bobShutdown.scriptPubKey))
+      assert(bob.stateData.asInstanceOf[DATA_NEGOTIATING].commitments.localParams.upfrontShutdownScript_opt.contains(bobShutdown.scriptPubKey))
     }
   }
 

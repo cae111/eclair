@@ -296,21 +296,21 @@ class WaitForAcceptChannelStateSpec extends TestKitBaseClass with FixtureAnyFunS
   test("recv AcceptChannel (upfront shutdown script)", Tag(ChannelStateTestsTags.UpfrontShutdownScript)) { f =>
     import f._
     val accept = bob2alice.expectMsgType[AcceptChannel]
-    assert(accept.upfrontShutdownScript_opt.isDefined && accept.upfrontShutdownScript_opt == bob.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_CREATED].localParams.defaultFinalScriptPubKey)
+    assert(accept.upfrontShutdownScript_opt.isDefined && accept.upfrontShutdownScript_opt == bob.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_CREATED].localParams.upfrontShutdownScript_opt)
     bob2alice.forward(alice, accept)
     awaitCond(alice.stateName == WAIT_FOR_FUNDING_INTERNAL)
-    assert(alice.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_INTERNAL].remoteParams.shutdownScript == accept.upfrontShutdownScript_opt)
+    assert(alice.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_INTERNAL].remoteParams.upfrontShutdownScript_opt == accept.upfrontShutdownScript_opt)
     aliceOrigin.expectNoMessage()
   }
 
   test("recv AcceptChannel (empty upfront shutdown script)", Tag(ChannelStateTestsTags.UpfrontShutdownScript)) { f =>
     import f._
     val accept = bob2alice.expectMsgType[AcceptChannel]
-    assert(accept.upfrontShutdownScript_opt.isDefined && accept.upfrontShutdownScript_opt == bob.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_CREATED].localParams.defaultFinalScriptPubKey)
+    assert(accept.upfrontShutdownScript_opt.isDefined && accept.upfrontShutdownScript_opt == bob.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_CREATED].localParams.upfrontShutdownScript_opt)
     val accept1 = accept.copy(tlvStream = TlvStream(ChannelTlv.UpfrontShutdownScriptTlv(ByteVector.empty)))
     bob2alice.forward(alice, accept1)
     awaitCond(alice.stateName == WAIT_FOR_FUNDING_INTERNAL)
-    assert(alice.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_INTERNAL].remoteParams.shutdownScript.isEmpty)
+    assert(alice.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_INTERNAL].remoteParams.upfrontShutdownScript_opt.isEmpty)
     aliceOrigin.expectNoMessage()
   }
 

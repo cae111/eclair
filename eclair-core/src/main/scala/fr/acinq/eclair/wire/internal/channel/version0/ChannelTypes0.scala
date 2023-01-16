@@ -208,7 +208,7 @@ private[channel] object ChannelTypes0 {
       val localParams1 = if (channelFeatures.hasFeature(Features.UpfrontShutdownScript)) {
         localParams
       } else {
-        localParams.copy(defaultFinalScriptPubKey = None)
+        localParams.copy(upfrontShutdownScript_opt = None)
       }
       channel.Commitments(
         channelId,

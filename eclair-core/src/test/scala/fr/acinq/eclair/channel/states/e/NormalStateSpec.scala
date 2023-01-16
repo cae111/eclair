@@ -2469,11 +2469,11 @@ class NormalStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
   test("recv CMD_CLOSE (with a script that does match our upfront shutdown script)", Tag(ChannelStateTestsTags.UpfrontShutdownScript)) { f =>
     import f._
     val sender = TestProbe()
-    val shutdownScript = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey.get
+    val shutdownScript = alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams.upfrontShutdownScript_opt.get
     alice ! CMD_CLOSE(sender.ref, Some(shutdownScript), None)
     sender.expectMsgType[RES_SUCCESS[CMD_CLOSE]]
     val shutdown = alice2bob.expectMsgType[Shutdown]
-    assert(shutdown.scriptPubKey == alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey.get)
+    assert(shutdown.scriptPubKey == alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams.upfrontShutdownScript_opt.get)
     awaitCond(alice.stateName == NORMAL)
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].localShutdown.isDefined)
   }
@@ -2484,7 +2484,7 @@ class NormalStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
     alice ! CMD_CLOSE(sender.ref, None, None)
     sender.expectMsgType[RES_SUCCESS[CMD_CLOSE]]
     val shutdown = alice2bob.expectMsgType[Shutdown]
-    assert(shutdown.scriptPubKey == alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey.get)
+    assert(shutdown.scriptPubKey == alice.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams.upfrontShutdownScript_opt.get)
     awaitCond(alice.stateName == NORMAL)
     awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].localShutdown.isDefined)
   }
@@ -2507,7 +2507,7 @@ class NormalStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
   def testShutdown(f: FixtureParam, script_opt: Option[ByteVector]): Unit = {
     import f._
     val bobParams = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams
-    alice ! Shutdown(ByteVector32.Zeroes, script_opt.getOrElse(bobParams.defaultFinalScriptPubKey.getOrElse(Script.write(Script.pay2wpkh(randomKey().publicKey)))))
+    alice ! Shutdown(ByteVector32.Zeroes, script_opt.getOrElse(bobParams.upfrontShutdownScript_opt.getOrElse(Script.write(Script.pay2wpkh(randomKey().publicKey)))))
     alice2bob.expectMsgType[Shutdown]
     alice2bob.expectMsgType[ClosingSigned]
     awaitCond(alice.stateName == NEGOTIATING)
@@ -2649,7 +2649,7 @@ class NormalStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with 
 
     // actual test begins
     val bobParams = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localParams
-    bob ! Shutdown(ByteVector32.Zeroes, bobParams.defaultFinalScriptPubKey.getOrElse(Script.write(Script.pay2wpkh(randomKey().publicKey))))
+    bob ! Shutdown(ByteVector32.Zeroes, bobParams.upfrontShutdownScript_opt.getOrElse(Script.write(Script.pay2wpkh(randomKey().publicKey))))
     bob2alice.expectMsgType[Shutdown]
     awaitCond(bob.stateName == SHUTDOWN)
   }

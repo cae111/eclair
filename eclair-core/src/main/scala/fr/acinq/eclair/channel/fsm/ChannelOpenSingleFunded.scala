@@ -76,7 +76,7 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
       // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script if this feature is not used
       // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
       val localShutdownScript = if (Features.canUseFeature(input.localParams.initFeatures, input.remoteInit.features, Features.UpfrontShutdownScript)) {
-        input.localParams.defaultFinalScriptPubKey.get
+        input.localParams.upfrontShutdownScript_opt.get
       } else {
         ByteVector.empty
       }
@@ -118,7 +118,7 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
           log.info("will use fundingMinDepth={}", minimumDepth)
           // In order to allow TLV extensions and keep backwards-compatibility, we include an empty upfront_shutdown_script if this feature is not used.
           // See https://github.com/lightningnetwork/lightning-rfc/pull/714.
-          val localShutdownScript = if (Features.canUseFeature(d.initFundee.localParams.initFeatures, d.initFundee.remoteInit.features, Features.UpfrontShutdownScript)) d.initFundee.localParams.defaultFinalScriptPubKey.get else ByteVector.empty
+          val localShutdownScript = if (Features.canUseFeature(d.initFundee.localParams.initFeatures, d.initFundee.remoteInit.features, Features.UpfrontShutdownScript)) d.initFundee.localParams.upfrontShutdownScript_opt.get else ByteVector.empty
           val accept = AcceptChannel(temporaryChannelId = open.temporaryChannelId,
             dustLimitSatoshis = d.initFundee.localParams.dustLimit,
             maxHtlcValueInFlightMsat = UInt64(d.initFundee.localParams.maxHtlcValueInFlightMsat.toLong),
@@ -151,7 +151,7 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
             delayedPaymentBasepoint = open.delayedPaymentBasepoint,
             htlcBasepoint = open.htlcBasepoint,
             initFeatures = d.initFundee.remoteInit.features,
-            shutdownScript = remoteShutdownScript)
+            upfrontShutdownScript_opt = remoteShutdownScript)
           log.debug("remote params: {}", remoteParams)
           goto(WAIT_FOR_FUNDING_CREATED) using DATA_WAIT_FOR_FUNDING_CREATED(open.temporaryChannelId, d.initFundee.localParams, remoteParams, open.fundingSatoshis, open.pushMsat, open.feeratePerKw, open.firstPerCommitmentPoint, open.channelFlags, d.initFundee.channelConfig, channelFeatures, accept) sending accept
       }
@@ -184,7 +184,7 @@ trait ChannelOpenSingleFunded extends SingleFundingHandlers with ErrorHandlers {
             delayedPaymentBasepoint = accept.delayedPaymentBasepoint,
             htlcBasepoint = accept.htlcBasepoint,
             initFeatures = init.remoteInit.features,
-            shutdownScript = remoteShutdownScript)
+            upfrontShutdownScript_opt = remoteShutdownScript)
           log.debug("remote params: {}", remoteParams)
           log.info("remote will use fundingMinDepth={}", accept.minimumDepth)
           val localFundingPubkey = keyManager.fundingPublicKey(init.localParams.fundingKeyPath)

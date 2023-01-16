@@ -598,7 +598,7 @@ object Peer {
       toSelfDelay = nodeParams.channelConf.toRemoteDelay, // we choose their delay
       maxAcceptedHtlcs = nodeParams.channelConf.maxAcceptedHtlcs,
       isInitiator = isInitiator,
-      defaultFinalScriptPubKey = defaultFinalScriptPubkey,
+      upfrontShutdownScript_opt = defaultFinalScriptPubkey,
       walletStaticPaymentBasepoint = walletStaticPaymentBasepoint,
       initFeatures = initFeatures)
   }

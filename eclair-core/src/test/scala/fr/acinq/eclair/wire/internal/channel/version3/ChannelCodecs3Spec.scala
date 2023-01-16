@@ -96,7 +96,7 @@ class ChannelCodecs3Spec extends AnyFunSuite {
       Features(ChannelRangeQueries -> Optional, VariableLengthOnion -> Mandatory, PaymentSecret -> Mandatory),
       None)
     assert(codec.decodeValue(codec.encode(remoteParams).require).require == remoteParams)
-    val remoteParams1 = remoteParams.copy(shutdownScript = Some(ByteVector.fromValidHex("deadbeef")))
+    val remoteParams1 = remoteParams.copy(upfrontShutdownScript_opt = Some(ByteVector.fromValidHex("deadbeef")))
     assert(codec.decodeValue(codec.encode(remoteParams1).require).require == remoteParams1)
 
     val dataWithoutRemoteShutdownScript = normal.copy(commitments = normal.commitments.copy(remoteParams = remoteParams))

@@ -32,7 +32,7 @@ private[version3] object ChannelTypes3 {
   object LocalParams {
     def apply(input: channel.LocalParams) = new LocalParams(input.nodeId, input.fundingKeyPath, input.dustLimit, input.maxHtlcValueInFlightMsat,
       input.requestedChannelReserve_opt, input.htlcMinimum, input.toSelfDelay, input.maxAcceptedHtlcs, input.isInitiator,
-      input.defaultFinalScriptPubKey.getOrElse(ByteVector.empty), input.walletStaticPaymentBasepoint, input.initFeatures)
+      input.upfrontShutdownScript_opt.getOrElse(ByteVector.empty), input.walletStaticPaymentBasepoint, input.initFeatures)
   }
 
   case class Commitments(channelId: ByteVector32,
@@ -51,7 +51,7 @@ private[version3] object ChannelTypes3 {
       channelId,
       channelConfig,
       channelFeatures,
-      if (channelFeatures.hasFeature(Features.UpfrontShutdownScript)) localParams.migrate() else localParams.migrate().copy(defaultFinalScriptPubKey = None),
+      if (channelFeatures.hasFeature(Features.UpfrontShutdownScript)) localParams.migrate() else localParams.migrate().copy(upfrontShutdownScript_opt = None),
       remoteParams: RemoteParams,
       channelFlags,
       localCommit, remoteCommit,

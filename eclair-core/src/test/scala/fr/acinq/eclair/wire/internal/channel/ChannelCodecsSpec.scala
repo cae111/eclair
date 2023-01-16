@@ -261,7 +261,7 @@ object ChannelCodecsSpec {
     htlcMinimum = 10000 msat,
     toSelfDelay = CltvExpiryDelta(144),
     maxAcceptedHtlcs = 50,
-    defaultFinalScriptPubKey = None,
+    upfrontShutdownScript_opt = None,
     walletStaticPaymentBasepoint = None,
     isInitiator = true,
     initFeatures = Features.empty)
@@ -280,7 +280,7 @@ object ChannelCodecsSpec {
     delayedPaymentBasepoint = PrivateKey(ByteVector.fill(32)(4)).publicKey,
     htlcBasepoint = PrivateKey(ByteVector.fill(32)(6)).publicKey,
     initFeatures = Features.empty,
-    shutdownScript = None)
+    upfrontShutdownScript_opt = None)
 
   val paymentPreimages = Seq(
     ByteVector32(hex"0000000000000000000000000000000000000000000000000000000000000000"),
