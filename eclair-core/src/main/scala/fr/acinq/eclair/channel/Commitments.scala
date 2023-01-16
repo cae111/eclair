@@ -89,7 +89,7 @@ case class Commitments(channelId: ByteVector32,
   require(channelFeatures.paysDirectlyToWallet == localParams.walletStaticPaymentBasepoint.isDefined, s"localParams.walletStaticPaymentBasepoint must be defined only for commitments that pay directly to our wallet (channel features: $channelFeatures)")
   require(channelFeatures.hasFeature(DualFunding) == localParams.requestedChannelReserve_opt.isEmpty, "custom local channel reserve is incompatible with dual-funded channels")
   require(channelFeatures.hasFeature(DualFunding) == remoteParams.requestedChannelReserve_opt.isEmpty, "custom remote channel reserve is incompatible with dual-funded channels")
-  //require(channelFeatures.hasFeature(Features.UpfrontShutdownScript) == localParams.defaultFinalScriptPubKey.isDefined, s"localParams.defaultFinalScriptPubKey must be defined only for commitments that set upfront_shutdown_script (channel features: $channelFeatures)")
+  require(channelFeatures.hasFeature(Features.UpfrontShutdownScript) == localParams.defaultFinalScriptPubKey.isDefined, s"localParams.defaultFinalScriptPubKey must be defined only for commitments that set upfront_shutdown_script (channel features: $channelFeatures)")
 
   def nextRemoteCommit_opt: Option[RemoteCommit] = remoteNextCommitInfo.swap.toOption.map(_.nextRemoteCommit)
 

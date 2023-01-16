@@ -73,9 +73,9 @@ class ChannelCodecs1Spec extends AnyFunSuite {
       initFeatures = Features(randomBytes(256)).initFeatures())
     val o1 = o.copy(walletStaticPaymentBasepoint = Some(PrivateKey(randomBytes32()).publicKey))
 
-//    roundtrip(o, localParamsCodec(ChannelVersion.ZEROES))
-//    roundtrip(o1, localParamsCodec(ChannelVersion.STATIC_REMOTEKEY))
-//    roundtrip(o, localParamsCodec(ChannelVersion.ANCHOR_OUTPUTS))
+    roundtrip(o, localParamsCodec(ChannelVersion.ZEROES))
+    roundtrip(o1, localParamsCodec(ChannelVersion.STATIC_REMOTEKEY))
+    roundtrip(o, localParamsCodec(ChannelVersion.ANCHOR_OUTPUTS))
   }
 
   test("encode/decode remote params") {
