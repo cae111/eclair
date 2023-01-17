@@ -16,16 +16,16 @@
 
 package fr.acinq.eclair.channel.states
 
-import akka.actor.typed.scaladsl.adapter.{ClassicActorSystemOps, actorRefAdapter}
+import akka.actor.typed.scaladsl.adapter.actorRefAdapter
 import akka.actor.{ActorContext, ActorRef, ActorSystem}
 import akka.testkit.{TestFSMRef, TestKit, TestProbe}
 import com.softwaremill.quicklens.ModifyPimp
 import fr.acinq.bitcoin.ScriptFlags
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
-import fr.acinq.bitcoin.scalacompat.{Block, ByteVector32, Crypto, SatoshiLong, Script, Transaction, computeBIP84Address}
+import fr.acinq.bitcoin.scalacompat.{ByteVector32, Crypto, SatoshiLong, Script, Transaction}
 import fr.acinq.eclair.TestConstants.{Alice, Bob}
 import fr.acinq.eclair._
-import fr.acinq.eclair.blockchain.bitcoind.OnchainAddressManager
+import fr.acinq.eclair.blockchain.bitcoind.{OnchainAddressManager, OnchainAddressManagerSpec}
 import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher._
 import fr.acinq.eclair.blockchain.fee.{FeeTargets, FeeratePerKw}
 import fr.acinq.eclair.blockchain.{DummyOnChainWallet, OnChainAddressGenerator, OnChainWallet, SingleKeyOnChainWallet}
@@ -45,7 +45,7 @@ import org.scalatest.Assertions
 import org.scalatest.concurrent.Eventually
 
 import java.util.UUID
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.Await
 import scala.concurrent.duration._
 
 object ChannelStateTestsTags {
@@ -162,13 +162,6 @@ trait ChannelStateTestsBase extends Assertions with Eventually {
       implicit val system: ActorSystem = systemB
       TestFSMRef(new Channel(finalNodeParamsB, wallet, finalNodeParamsA.nodeId, bob2blockchain.ref, bob2relayer.ref, FakeTxPublisherFactory(bob2blockchain)), bobPeer.ref)
     }
-    val generator = new OnChainAddressGenerator {
-      override def getReceiveAddress(label: String)(implicit ec: ExecutionContext): Future[String] = Future.successful(computeBIP84Address(randomKey().publicKey, Block.RegtestGenesisBlock.hash))
-
-      override def getP2wpkhPubkey()(implicit ec: ExecutionContext): Future[Crypto.PublicKey] = Future.successful(randomKey().publicKey)
-    }
-    systemA.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, Alice.finalScriptPubKey, 10 seconds))
-    systemB.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, Bob.finalScriptPubKey, 10 seconds))
     SetupFixture(alice, bob, aliceOrigin, alice2bob, bob2alice, alice2blockchain, bob2blockchain, router, alice2relayer, bob2relayer, channelUpdateListener, wallet, alicePeer, bobPeer)
   }
 
@@ -506,15 +499,16 @@ trait ChannelStateTestsBase extends Assertions with Eventually {
     // check that we store the local txs without sigs
     localCommit.commitTxAndRemoteSig.commitTx.tx.txIn.foreach(txIn => assert(txIn.witness.isNull))
     localCommit.htlcTxsAndRemoteSigs.foreach(_.htlcTx.tx.txIn.foreach(txIn => assert(txIn.witness.isNull)))
+    val probe = TestProbe()
+    systemA.eventStream.subscribe(probe.ref, classOf[OnchainAddressManager.Command])
+
     val commitTx = localCommit.commitTxAndRemoteSig.commitTx.tx
-    val currentFinalScript = Alice.nodeParams.currentFinalScriptPubKey
     s ! Error(ByteVector32.Zeroes, "oops")
     eventually(assert(s.stateName == CLOSING))
+    probe.expectMsg(OnchainAddressManager.Renew)
     val closingState = s.stateData.asInstanceOf[DATA_CLOSING]
     assert(closingState.localCommitPublished.isDefined)
     val localCommitPublished = closingState.localCommitPublished.get
-    assert(closingState.finalScriptPubKey == currentFinalScript)
-    TestKit.awaitCond(Alice.nodeParams.currentFinalScriptPubKey != currentFinalScript, 10 seconds, 1 second, false)
 
     val publishedLocalCommitTx = s2blockchain.expectMsgType[TxPublisher.PublishFinalTx].tx
     assert(publishedLocalCommitTx.txid == commitTx.txid)

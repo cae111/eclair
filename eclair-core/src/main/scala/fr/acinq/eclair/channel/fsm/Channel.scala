@@ -512,7 +512,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
           }
           if (d.remoteShutdown.isDefined && !commitments1.localHasUnsignedOutgoingHtlcs) {
             // we were waiting for our pending htlcs to be signed before replying with our local shutdown
-            val finalScriptPubKey = commitments1.localParams.upfrontShutdownScript_opt.getOrElse(nodeParams.currentFinalScriptPubKey)
+            val finalScriptPubKey = commitments1.localParams.upfrontShutdownScript_opt.getOrElse(getFinalScriptPubKey(d))
             val localShutdown = Shutdown(d.channelId, finalScriptPubKey)
             // note: it means that we had pending htlcs to sign, therefore we go to SHUTDOWN, not to NEGOTIATING
             require(commitments1.remoteCommit.spec.htlcs.nonEmpty, "we must have just signed new htlcs, otherwise we would have sent our Shutdown earlier")
@@ -526,21 +526,21 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
     case Event(r: RevocationTimeout, d: DATA_NORMAL) => handleRevocationTimeout(r, d)
 
     case Event(c: CMD_CLOSE, d: DATA_NORMAL) =>
-      val localScriptPubKey = c.scriptPubKey.getOrElse(d.commitments.localParams.upfrontShutdownScript_opt.getOrElse(nodeParams.currentFinalScriptPubKey))
-      d.commitments.validateLocalShutdownScript(localScriptPubKey) match {
-        case Left(e) => handleCommandError(e, c)
-        case Right(localShutdownScript) =>
-          if (d.localShutdown.isDefined) {
-            handleCommandError(ClosingAlreadyInProgress(d.channelId), c)
-          } else if (d.commitments.localHasUnsignedOutgoingHtlcs) {
-            // NB: simplistic behavior, we could also sign-then-close
-            handleCommandError(CannotCloseWithUnsignedOutgoingHtlcs(d.channelId), c)
-          } else if (d.commitments.localHasUnsignedOutgoingUpdateFee) {
-            handleCommandError(CannotCloseWithUnsignedOutgoingUpdateFee(d.channelId), c)
-          } else {
+      if (d.localShutdown.isDefined) {
+        handleCommandError(ClosingAlreadyInProgress(d.channelId), c)
+      } else if (d.commitments.localHasUnsignedOutgoingHtlcs) {
+        // NB: simplistic behavior, we could also sign-then-close
+        handleCommandError(CannotCloseWithUnsignedOutgoingHtlcs(d.channelId), c)
+      } else if (d.commitments.localHasUnsignedOutgoingUpdateFee) {
+        handleCommandError(CannotCloseWithUnsignedOutgoingUpdateFee(d.channelId), c)
+      } else {
+        val localScriptPubKey = c.scriptPubKey.getOrElse(d.commitments.localParams.upfrontShutdownScript_opt.getOrElse(getFinalScriptPubKey(d)))
+        d.commitments.validateLocalShutdownScript(localScriptPubKey) match {
+          case Left(e) => handleCommandError(e, c)
+          case Right(localShutdownScript) =>
             val shutdown = Shutdown(d.channelId, localShutdownScript)
             handleCommandSuccess(c, d.copy(localShutdown = Some(shutdown), closingFeerates = c.feerates)) storing() sending shutdown
-          }
+        }
       }
 
     case Event(remoteShutdown@Shutdown(_, remoteScriptPubKey, _), d: DATA_NORMAL) =>
@@ -587,7 +587,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
               case Some(localShutdown) =>
                 (localShutdown, Nil)
               case None =>
-                val localShutdown = Shutdown(d.channelId, d.commitments.localParams.upfrontShutdownScript_opt.getOrElse(nodeParams.currentFinalScriptPubKey))
+                val localShutdown = Shutdown(d.channelId, d.commitments.localParams.upfrontShutdownScript_opt.getOrElse(getFinalScriptPubKey(d)))
                 // we need to send our shutdown if we didn't previously
                 (localShutdown, localShutdown :: Nil)
             }
@@ -1624,14 +1624,6 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder, val 
           case _: TransientChannelData => None
         }
         context.system.eventStream.publish(ChannelStateChanged(self, nextStateData.channelId, peer, remoteNodeId, state, nextState, commitments_opt))
-        if (nextState == CLOSING) {
-          nextStateData match {
-            case closing: DATA_CLOSING =>
-              log.warning(s"${context.system.name} $state $nextState renew ${closing.finalScriptPubKey}")
-              context.system.eventStream.publish(OnchainAddressManager.Renew)
-            case _ => ()
-          }
-        }
       }
 
       if (nextState == CLOSED) {
