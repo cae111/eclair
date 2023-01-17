@@ -167,8 +167,8 @@ trait ChannelStateTestsBase extends Assertions with Eventually {
 
       override def getP2wpkhPubkey()(implicit ec: ExecutionContext): Future[Crypto.PublicKey] = Future.successful(randomKey().publicKey)
     }
-    systemA.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, Alice.finalScriptPubKey))
-    systemB.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, Bob.finalScriptPubKey))
+    systemA.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, Alice.finalScriptPubKey, 10 seconds))
+    systemB.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, Bob.finalScriptPubKey, 10 seconds))
     SetupFixture(alice, bob, aliceOrigin, alice2bob, bob2alice, alice2blockchain, bob2blockchain, router, alice2relayer, bob2relayer, channelUpdateListener, wallet, alicePeer, bobPeer)
   }
 

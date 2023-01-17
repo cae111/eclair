@@ -8,6 +8,7 @@ import org.scalatest.funsuite.AnyFunSuiteLike
 import scodec.bits.ByteVector
 
 import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
 
 class OnchainAddressManagerSpec extends TestKitBaseClass with AnyFunSuiteLike {
@@ -18,16 +19,16 @@ class OnchainAddressManagerSpec extends TestKitBaseClass with AnyFunSuiteLike {
 
       override def getP2wpkhPubkey()(implicit ec: ExecutionContext): Future[Crypto.PublicKey] = Future.successful(randomKey().publicKey)
     }
-    val manager = system.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, finalScriptPubKey))
+    val manager = system.spawnAnonymous(OnchainAddressManager(Block.RegtestGenesisBlock.hash, generator, finalScriptPubKey, 3 seconds))
 
     // renew script explicitly
     val currentScript = finalScriptPubKey.get()
-    manager ! OnchainAddressManager.Renew(currentScript)
+    manager ! OnchainAddressManager.Renew
     awaitCond(finalScriptPubKey.get() != currentScript)
 
     // renew script through the event stream
     val currentScript1 = finalScriptPubKey.get()
-    system.eventStream.publish(OnchainAddressManager.Renew(currentScript1))
+    system.eventStream.publish(OnchainAddressManager.Renew)
     awaitCond(finalScriptPubKey.get() != currentScript1)
   }
 }

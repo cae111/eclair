@@ -355,7 +355,7 @@ class Setup(val datadir: File,
       balanceActor = system.spawn(BalanceActor(nodeParams.db, bitcoinClient, channelsListener, nodeParams.balanceCheckInterval), name = "balance-actor")
 
       postman = system.spawn(Behaviors.supervise(Postman(switchboard.toTyped)).onFailure(typed.SupervisorStrategy.restart), name = "postman")
-      _ = system.spawn(Behaviors.supervise(OnchainAddressManager(nodeParams.chainHash, bitcoinClient, finalScriptPubKey)).onFailure(typed.SupervisorStrategy.restart), name = "onchain-address-manager")
+      _ = system.spawn(Behaviors.supervise(OnchainAddressManager(nodeParams.chainHash, bitcoinClient, finalScriptPubKey, 15 seconds)).onFailure(typed.SupervisorStrategy.restart), name = "onchain-address-manager")
 
       kit = Kit(
         nodeParams = nodeParams,
