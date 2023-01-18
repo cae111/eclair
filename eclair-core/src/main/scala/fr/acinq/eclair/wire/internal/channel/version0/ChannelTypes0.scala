@@ -18,14 +18,13 @@ package fr.acinq.eclair.wire.internal.channel.version0
 
 import com.softwaremill.quicklens._
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
-import fr.acinq.bitcoin.scalacompat.DeterministicWallet.KeyPath
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, ByteVector64, Crypto, OP_CHECKMULTISIG, OP_PUSHDATA, OutPoint, Satoshi, Script, ScriptWitness, Transaction, TxOut}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.ShaChain
 import fr.acinq.eclair.transactions.CommitmentSpec
 import fr.acinq.eclair.transactions.Transactions._
-import fr.acinq.eclair.{BlockHeight, ChannelTypeFeature, CltvExpiryDelta, Features, InitFeature, MilliSatoshi, PermanentChannelFeature, channel}
-import scodec.bits.{BitVector, ByteVector}
+import fr.acinq.eclair.{BlockHeight, ChannelTypeFeature, Features, PermanentChannelFeature, channel}
+import scodec.bits.BitVector
 
 private[channel] object ChannelTypes0 {
 
@@ -179,6 +178,7 @@ private[channel] object ChannelTypes0 {
     val STATIC_REMOTEKEY = STANDARD | fromBit(USE_STATIC_REMOTEKEY_BIT) // PUBKEY_KEYPATH + STATIC_REMOTEKEY
     val ANCHOR_OUTPUTS = STATIC_REMOTEKEY | fromBit(USE_ANCHOR_OUTPUTS_BIT) // PUBKEY_KEYPATH + STATIC_REMOTEKEY + ANCHOR_OUTPUTS
   }
+
   case class Commitments(channelVersion: ChannelVersion,
                          localParams: LocalParams, remoteParams: RemoteParams,
                          channelFlags: ChannelFlags,
@@ -205,15 +205,10 @@ private[channel] object ChannelTypes0 {
         Set.empty
       }
       val channelFeatures = ChannelFeatures(baseChannelFeatures ++ commitmentFeatures)
-      val localParams1 = if (channelFeatures.hasFeature(Features.UpfrontShutdownScript)) {
-        localParams
-      } else {
-        localParams.copy(upfrontShutdownScript_opt = None)
-      }
       channel.Commitments(
         channelId,
         channelConfig, channelFeatures,
-        localParams1, remoteParams,
+        localParams, remoteParams,
         channelFlags,
         localCommit.migrate(remoteParams.fundingPubKey), remoteCommit,
         localChanges, remoteChanges,
