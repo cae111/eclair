@@ -4,6 +4,7 @@ package fr.acinq.eclair.blockchain.bitcoind
 import akka.actor.typed.Behavior
 import akka.actor.typed.eventstream.EventStream
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
+import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Script}
 import fr.acinq.eclair.blockchain.OnChainAddressGenerator
 import scodec.bits.ByteVector
@@ -18,31 +19,31 @@ object OnchainAddressManager {
 
   case object Renew extends Command
 
-  private case class Set(pukeyScript: ByteVector) extends Command
+  private case class Set(pubkey: PublicKey) extends Command
 
   private case class Error(reason: Throwable) extends Command
 
   private case object Done extends Command
 
-  def apply(chainHash: ByteVector32, generator: OnChainAddressGenerator, finalScriptPubKey: AtomicReference[ByteVector], delay: FiniteDuration): Behavior[Command] = {
+  def apply(generator: OnChainAddressGenerator, finalPubkey: AtomicReference[PublicKey], delay: FiniteDuration): Behavior[Command] = {
     Behaviors.setup { context =>
       context.system.eventStream ! EventStream.Subscribe[Command](context.self)
       Behaviors.withTimers { timers =>
-        new OnchainAddressManager(chainHash, generator, finalScriptPubKey, context, timers, delay).idle()
+        new OnchainAddressManager(generator, finalPubkey, context, timers, delay).idle()
       }
     }
   }
 }
 
-private class OnchainAddressManager(chainHash: ByteVector32, generator: OnChainAddressGenerator, finalScriptPubKey: AtomicReference[ByteVector], context: ActorContext[OnchainAddressManager.Command], timers: TimerScheduler[OnchainAddressManager.Command], delay: FiniteDuration) {
+private class OnchainAddressManager(generator: OnChainAddressGenerator, finalPubkey: AtomicReference[PublicKey], context: ActorContext[OnchainAddressManager.Command], timers: TimerScheduler[OnchainAddressManager.Command], delay: FiniteDuration) {
 
   import OnchainAddressManager._
 
   def idle(): Behavior[Command] = Behaviors.receiveMessagePartial {
     case Renew =>
-      context.log.debug(s"received Renew current script is ${finalScriptPubKey.get()}")
-      context.pipeToSelf(generator.getReceiveAddress()) {
-        case Success(address) => Set(Script.write(fr.acinq.eclair.addressToPublicKeyScript(address, chainHash)))
+      context.log.debug(s"received Renew current script is ${finalPubkey.get()}")
+      context.pipeToSelf(generator.getP2wpkhPubkey()) {
+        case Success(pubkey) => Set(pubkey)
         case Failure(reason) => Error(reason)
       }
       Behaviors.receiveMessagePartial {
@@ -55,10 +56,10 @@ private class OnchainAddressManager(chainHash: ByteVector32, generator: OnChainA
       }
   }
 
-  def waiting(script: ByteVector): Behavior[Command] = Behaviors.receiveMessagePartial {
+  def waiting(script: PublicKey): Behavior[Command] = Behaviors.receiveMessagePartial {
     case Done =>
       context.log.info(s"setting final onchain script to $script")
-      finalScriptPubKey.set(script)
+      finalPubkey.set(script)
       idle()
   }
 }
