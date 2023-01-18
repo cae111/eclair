@@ -89,7 +89,7 @@ case class Commitments(channelId: ByteVector32,
   require(channelFeatures.paysDirectlyToWallet == localParams.walletStaticPaymentBasepoint.isDefined, s"localParams.walletStaticPaymentBasepoint must be defined only for commitments that pay directly to our wallet (channel features: $channelFeatures)")
   require(channelFeatures.hasFeature(DualFunding) == localParams.requestedChannelReserve_opt.isEmpty, "custom local channel reserve is incompatible with dual-funded channels")
   require(channelFeatures.hasFeature(DualFunding) == remoteParams.requestedChannelReserve_opt.isEmpty, "custom remote channel reserve is incompatible with dual-funded channels")
-  if(channelFeatures.hasFeature(Features.UpfrontShutdownScript)) require(localParams.upfrontShutdownScript_opt.isDefined, s"localParams.defaultFinalScriptPubKey must be defined only for commitments that set upfront_shutdown_script (channel features: $channelFeatures)")
+  if (channelFeatures.hasFeature(Features.UpfrontShutdownScript)) require(localParams.upfrontShutdownScript_opt.isDefined, s"localParams.upfrontShutdownScript_opt must be defined for commitments that set upfront_shutdown_script (channel features: $channelFeatures)")
 
   def nextRemoteCommit_opt: Option[RemoteCommit] = remoteNextCommitInfo.swap.toOption.map(_.nextRemoteCommit)
 
@@ -116,7 +116,8 @@ case class Commitments(channelId: ByteVector32,
   def validateRemoteShutdownScript(remoteScriptPubKey: ByteVector): Either[ChannelException, ByteVector] = {
     // to check whether shutdown_any_segwit is active we check features in local and remote parameters, which are negotiated each time we connect to our peer.
     val allowAnySegwit = Features.canUseFeature(localParams.initFeatures, remoteParams.initFeatures, Features.ShutdownAnySegwit)
-    if (localParams.upfrontShutdownScript_opt.isDefined && !remoteParams.upfrontShutdownScript_opt.forall(_ == remoteScriptPubKey)) Left(InvalidFinalScript(channelId))
+    // we always compare against the remote upfront shutdown script (if any) even if the option is not explicitly set
+    if (!remoteParams.upfrontShutdownScript_opt.forall(_ == remoteScriptPubKey)) Left(InvalidFinalScript(channelId))
     else if (!Closing.MutualClose.isValidFinalScriptPubkey(remoteScriptPubKey, allowAnySegwit)) Left(InvalidFinalScript(channelId))
     else Right(remoteScriptPubKey)
   }

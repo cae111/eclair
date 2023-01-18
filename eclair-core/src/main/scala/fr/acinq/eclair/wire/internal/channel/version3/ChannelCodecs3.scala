@@ -465,12 +465,14 @@ private[channel] object ChannelCodecs3 {
       .typecase(0x01, txCodec.as[SingleFundedUnconfirmedFundingTx])
       .typecase(0x02, signedSharedTransactionCodec.as[DualFundedUnconfirmedFundingTx])
 
+    // codec used before localParams.upfrontShutdownScript was made optional
+    // commitments.localParams.upfrontShutdownScript_opt is always present for data serialized with this codec, and was used as the final script pubkey to send onchain funds to
     val DATA_CLOSING_0d_Codec: Codec[DATA_CLOSING] = (
       ("commitments" | commitmentsCodec) >>:~ { commitments =>
         ("fundingTx_opt" | optional(bool8, unconfirmedFundingTxCodec)) ::
         ("waitingSince" | blockHeight) ::
         ("alternativeCommitments" | listOfN(uint16, dualFundingTxCodec)) ::
-        ("finalScriptPubKey" | provide(commitments.localParams.upfrontShutdownScript_opt.get))::
+        ("finalScriptPubKey" | provide(commitments.localParams.upfrontShutdownScript_opt.get)) ::
         ("mutualCloseProposed" | listOfN(uint16, closingTxCodec)) ::
         ("mutualClosePublished" | listOfN(uint16, closingTxCodec)) ::
         ("localCommitPublished" | optional(bool8, localCommitPublishedCodec)) ::
