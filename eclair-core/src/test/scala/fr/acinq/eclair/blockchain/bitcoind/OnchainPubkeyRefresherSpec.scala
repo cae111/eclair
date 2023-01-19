@@ -25,10 +25,5 @@ class OnchainPubkeyRefresherSpec extends TestKitBaseClass with AnyFunSuiteLike {
     val currentPubkey = finalPubkey.get()
     manager ! OnchainPubkeyRefresher.Renew
     awaitCond(finalPubkey.get() != currentPubkey)
-
-    // renew script through the event stream
-    val currentPubkey1 = finalPubkey.get()
-    system.eventStream.publish(OnchainPubkeyRefresher.Renew)
-    awaitCond(finalPubkey.get() != currentPubkey1)
   }
 }

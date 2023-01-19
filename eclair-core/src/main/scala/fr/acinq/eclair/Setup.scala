@@ -256,18 +256,19 @@ class Setup(val datadir: File,
       })
       _ <- feeratesRetrieved.future
 
-      bitcoinCoreClient = new BitcoinCoreClient(bitcoin)
-      pubkey <- bitcoinCoreClient.getP2wpkhPubkey()
-      finalPubkey = new AtomicReference[PublicKey](pubkey)
+      finalPubkey = new AtomicReference[PublicKey](null)
       pubkeyRefreshDelay = FiniteDuration(config.getDuration("bitcoind.final-pubkey-refresh-delay").getSeconds, TimeUnit.SECONDS)
-      _ = system.spawn(Behaviors.supervise(OnchainPubkeyRefresher(bitcoinCoreClient, finalPubkey, pubkeyRefreshDelay)).onFailure(typed.SupervisorStrategy.restart), name = "onchain-address-manager")
       bitcoinClient = new BitcoinCoreClient(bitcoin) with OnchainPubkeyCache {
+        val refresher: typed.ActorRef[OnchainPubkeyRefresher.Command] = system.spawn(Behaviors.supervise(OnchainPubkeyRefresher(this, finalPubkey, pubkeyRefreshDelay)).onFailure(typed.SupervisorStrategy.restart), name = "onchain-address-manager")
+
         override def getP2wpkhPubkey(renew: Boolean): PublicKey = {
           val key = finalPubkey.get()
-          if (renew) system.eventStream.publish(OnchainPubkeyRefresher.Renew)
+          if (renew) refresher ! OnchainPubkeyRefresher.Renew
           key
         }
       }
+      initialPubkey <- bitcoinClient.getP2wpkhPubkey()
+      _ = finalPubkey.set(initialPubkey)
 
       // If we started funding a transaction and restarted before signing it, we may have utxos that stay locked forever.
       // We want to do something about it: we can unlock them automatically, or let the node operator decide what to do.

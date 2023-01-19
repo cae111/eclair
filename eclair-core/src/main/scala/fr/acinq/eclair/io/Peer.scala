@@ -29,7 +29,7 @@ import fr.acinq.eclair.NotificationsLogger.NotifyNodeOperator
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.bitcoind.ZmqWatcher
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
-import fr.acinq.eclair.blockchain.{OnChainAddressGenerator, OnChainChannelFunder, OnchainPubkeyCache}
+import fr.acinq.eclair.blockchain.{OnChainChannelFunder, OnchainPubkeyCache}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.channel.fsm.Channel
 import fr.acinq.eclair.io.MessageRelay.Status
@@ -42,8 +42,7 @@ import fr.acinq.eclair.wire.protocol
 import fr.acinq.eclair.wire.protocol.{Error, HasChannelId, HasTemporaryChannelId, LightningMessage, NodeAddress, OnionMessage, RoutingMessage, UnknownMessage, Warning}
 import scodec.bits.ByteVector
 
-import scala.concurrent.{ExecutionContext, Future}
-import scala.util.{Failure, Success}
+import scala.concurrent.ExecutionContext
 
 /**
  * This actor represents a logical peer. There is one [[Peer]] per unique remote node id at all time.
@@ -386,20 +385,12 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, wallet: OnchainP
   }
 
   def createLocalParams(nodeParams: NodeParams, initFeatures: Features[InitFeature], upfrontShutdownScript: Boolean, channelType: SupportedChannelType, isInitiator: Boolean, dualFunded: Boolean, fundingAmount: Satoshi, disableMaxHtlcValueInFlight: Boolean): LocalParams = {
-    if (upfrontShutdownScript || channelType.paysDirectlyToWallet) {
-      val pubkey = wallet.getP2wpkhPubkey()
-      makeChannelParams(
-        nodeParams, initFeatures,
-        if (upfrontShutdownScript) Some(Script.write(Script.pay2wpkh(pubkey))) else None,
-        if (channelType.paysDirectlyToWallet) Some(pubkey) else None,
-        isInitiator = isInitiator, dualFunded = dualFunded, fundingAmount, disableMaxHtlcValueInFlight)
-    } else {
-      makeChannelParams(
-        nodeParams, initFeatures,
-        None,
-        None,
-        isInitiator = isInitiator, dualFunded = dualFunded, fundingAmount, disableMaxHtlcValueInFlight)
-    }
+    val pubkey_opt = if (upfrontShutdownScript || channelType.paysDirectlyToWallet) Some(wallet.getP2wpkhPubkey()) else None
+    makeChannelParams(
+      nodeParams, initFeatures,
+      if (upfrontShutdownScript) Some(Script.write(Script.pay2wpkh(pubkey_opt.get))) else None,
+      if (channelType.paysDirectlyToWallet) Some(pubkey_opt.get) else None,
+      isInitiator = isInitiator, dualFunded = dualFunded, fundingAmount, disableMaxHtlcValueInFlight)
   }
 
   def spawnChannel(origin_opt: Option[ActorRef]): ActorRef = {
