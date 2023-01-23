@@ -328,16 +328,15 @@ object Helpers {
    * This indicates whether our side of the channel is above the reserve requested by our counterparty. In other words,
    * this tells if we can use the channel to make a payment.
    */
-  def aboveReserve(commitments: Commitments)(implicit log: LoggingAdapter): Boolean = {
-    val remoteCommit = commitments.remoteNextCommitInfo match {
-      case Left(waitingForRevocation) => waitingForRevocation.nextRemoteCommit
-      case _ => commitments.remoteCommit
-    }
-    val toRemoteSatoshis = remoteCommit.spec.toRemote.truncateToSatoshi
-    // NB: this is an approximation (we don't take network fees into account)
-    val result = toRemoteSatoshis > commitments.localChannelReserve
-    log.debug(s"toRemoteSatoshis=$toRemoteSatoshis reserve=${commitments.localChannelReserve} aboveReserve=$result for remoteCommitNumber=${remoteCommit.index}")
-    result
+  def aboveReserve(metaCommitments: MetaCommitments)(implicit log: LoggingAdapter): Boolean = {
+    metaCommitments.commitments.forall(commitment => {
+      val remoteCommit = commitment.nextRemoteCommit_opt.getOrElse(commitment.remoteCommit)
+      val toRemoteSatoshis = remoteCommit.spec.toRemote.truncateToSatoshi
+      // NB: this is an approximation (we don't take network fees into account)
+      val result = toRemoteSatoshis > commitment.localChannelReserve(metaCommitments.params)
+      log.debug(s"toRemoteSatoshis=$toRemoteSatoshis reserve=${commitment.localChannelReserve(metaCommitments.params)} aboveReserve=$result for remoteCommitNumber=${remoteCommit.index}")
+      result
+    })
   }
 
   def getRelayFees(nodeParams: NodeParams, remoteNodeId: PublicKey, commitments: Commitments): RelayFees = {
