@@ -117,24 +117,38 @@ case class Commitments(channelId: ByteVector32,
 object Commitments {
 
   /** A 1:1 conversion helper to facilitate migration, nothing smart here. */
-  def apply(params: ChannelParams, common: Common, commitment: Commitment): Commitments = Commitments(
+  def apply(params: ChannelParams, changes: CommitmentChanges,
+            localCommitIndex: Long, remoteCommitIndex: Long,
+            localHtlcs: Set[DirectedHtlc], remoteHtlcs: Set[DirectedHtlc],
+            localCommitment: LocalCommitment,
+            remoteCommitment: RemoteCommitment, remotePerCommitmentPoint: PublicKey,
+            remoteNextCommitInfo: Either[(Long, CommitSig, Set[DirectedHtlc], RemoteCommitment, PublicKey), PublicKey],
+            originChannels: Map[Long, Origin],
+            remotePerCommitmentSecrets: ShaChain): Commitments = Commitments(
     channelId = params.channelId,
     channelConfig = params.channelConfig,
     channelFeatures = params.channelFeatures,
     localParams = params.localParams,
     remoteParams = params.remoteParams,
     channelFlags = params.channelFlags,
-    localCommit = commitment.localCommit,
-    remoteCommit = commitment.remoteCommit,
-    localChanges = common.localChanges,
-    remoteChanges = common.remoteChanges,
-    localNextHtlcId = common.localNextHtlcId,
-    remoteNextHtlcId = common.remoteNextHtlcId,
-    originChannels = common.originChannels,
-    remoteNextCommitInfo = common.remoteNextCommitInfo.swap.map(waitForRev => WaitingForRevocation(commitment.nextRemoteCommit_opt.get, waitForRev.sent, waitForRev.sentAfterLocalCommitIndex)).swap,
-    localFundingStatus = commitment.localFundingStatus,
-    remoteFundingStatus = commitment.remoteFundingStatus,
-    remotePerCommitmentSecrets = common.remotePerCommitmentSecrets
+    localCommit = LocalCommit(localCommitIndex, CommitmentSpec(localHtlcs, localCommitment.commitTxFeerate, localCommitment.toLocal, localCommitment.toRemote), localCommitment.commitTxAndRemoteSig, localCommitment.htlcTxsAndRemoteSigs),
+    remoteCommit = RemoteCommit(remoteCommitIndex, CommitmentSpec(remoteHtlcs, remoteCommitment.commitTxFeerate, remoteCommitment.toLocal, remoteCommitment.toRemote), remoteCommitment.txid, remotePerCommitmentPoint),
+    localChanges = changes.localChanges,
+    remoteChanges = changes.remoteChanges,
+    localNextHtlcId = changes.localNextHtlcId,
+    remoteNextHtlcId = changes.remoteNextHtlcId,
+    originChannels = originChannels,
+    remoteNextCommitInfo = remoteNextCommitInfo match {
+      case Left((sentAfterLocalCommitIndex, commitSig, nextRemoteHtlcs, nextRemoteCommitment, nextRemotePerCommitmentPoint)) => Left(WaitingForRevocation(
+        RemoteCommit(remoteCommitIndex + 1, CommitmentSpec(nextRemoteHtlcs, nextRemoteCommitment.commitTxFeerate, nextRemoteCommitment.toLocal, nextRemoteCommitment.toRemote), nextRemoteCommitment.txid, nextRemotePerCommitmentPoint),
+        commitSig,
+        sentAfterLocalCommitIndex,
+      ))
+      case Right(perCommitmentPoint) => Right(perCommitmentPoint)
+    },
+    localFundingStatus = localCommitment.localFundingStatus,
+    remoteFundingStatus = localCommitment.remoteFundingStatus,
+    remotePerCommitmentSecrets = remotePerCommitmentSecrets
   )
 
 }

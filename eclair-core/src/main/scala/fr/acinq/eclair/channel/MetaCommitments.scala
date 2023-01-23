@@ -18,7 +18,7 @@ import fr.acinq.eclair.wire.protocol._
 import fr.acinq.eclair.{BlockHeight, CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, MilliSatoshiLong, payment}
 import scodec.bits.ByteVector
 
-/** Static parameters shared by all commitments. */
+/** Static channel parameters shared by all commitments. */
 case class ChannelParams(channelId: ByteVector32,
                          channelConfig: ChannelConfig,
                          channelFeatures: ChannelFeatures,
@@ -83,19 +83,10 @@ case class ChannelParams(channelId: ByteVector32,
 
 }
 
-case class WaitForRev(sent: CommitSig, sentAfterLocalCommitIndex: Long)
+/** Changes are applied to all commitments, and must be be valid for all commitments. */
+case class CommitmentChanges(localChanges: LocalChanges, remoteChanges: RemoteChanges, localNextHtlcId: Long, remoteNextHtlcId: Long) {
 
-/** Dynamic values shared by all commitments, independently of the funding tx. */
-case class Common(localChanges: LocalChanges, remoteChanges: RemoteChanges,
-                  localNextHtlcId: Long, remoteNextHtlcId: Long,
-                  localCommitIndex: Long, remoteCommitIndex: Long,
-                  originChannels: Map[Long, Origin], // for outgoing htlcs relayed through us, details about the corresponding incoming htlcs
-                  remoteNextCommitInfo: Either[WaitForRev, PublicKey], // this one is tricky, it must be kept in sync with Commitment.nextRemoteCommit_opt
-                  remotePerCommitmentSecrets: ShaChain) {
-
-  import Common._
-
-  val nextRemoteCommitIndex = remoteCommitIndex + 1
+  import CommitmentChanges._
 
   val localHasChanges: Boolean = remoteChanges.acked.nonEmpty || localChanges.proposed.nonEmpty
   val remoteHasChanges: Boolean = localChanges.acked.nonEmpty || remoteChanges.proposed.nonEmpty
@@ -104,28 +95,28 @@ case class Common(localChanges: LocalChanges, remoteChanges: RemoteChanges,
   val localHasUnsignedOutgoingUpdateFee: Boolean = localChanges.proposed.collectFirst { case u: UpdateFee => u }.isDefined
   val remoteHasUnsignedOutgoingUpdateFee: Boolean = remoteChanges.proposed.collectFirst { case u: UpdateFee => u }.isDefined
 
-  def addLocalProposal(proposal: UpdateMessage): Common = copy(localChanges = localChanges.copy(proposed = localChanges.proposed :+ proposal))
+  def addLocalProposal(proposal: UpdateMessage): CommitmentChanges = copy(localChanges = localChanges.copy(proposed = localChanges.proposed :+ proposal))
 
-  def addRemoteProposal(proposal: UpdateMessage): Common = copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed :+ proposal))
+  def addRemoteProposal(proposal: UpdateMessage): CommitmentChanges = copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed :+ proposal))
 
   /**
    * When reconnecting, we drop all unsigned changes.
    */
-  def discardUnsignedUpdates()(implicit log: LoggingAdapter): Common = {
+  def discardUnsignedUpdates()(implicit log: LoggingAdapter): CommitmentChanges = {
     log.debug("discarding proposed OUT: {}", localChanges.proposed.map(msg2String(_)).mkString(","))
     log.debug("discarding proposed IN: {}", remoteChanges.proposed.map(msg2String(_)).mkString(","))
-    val common1 = copy(
+    val changes1 = copy(
       localChanges = localChanges.copy(proposed = Nil),
       remoteChanges = remoteChanges.copy(proposed = Nil),
       localNextHtlcId = localNextHtlcId - localChanges.proposed.collect { case u: UpdateAddHtlc => u }.size,
       remoteNextHtlcId = remoteNextHtlcId - remoteChanges.proposed.collect { case u: UpdateAddHtlc => u }.size)
-    log.debug(s"localNextHtlcId=$localNextHtlcId->${common1.localNextHtlcId}")
-    log.debug(s"remoteNextHtlcId=$remoteNextHtlcId->${common1.remoteNextHtlcId}")
-    common1
+    log.debug(s"localNextHtlcId=$localNextHtlcId->${changes1.localNextHtlcId}")
+    log.debug(s"remoteNextHtlcId=$remoteNextHtlcId->${changes1.remoteNextHtlcId}")
+    changes1
   }
 }
 
-object Common {
+object CommitmentChanges {
   def alreadyProposed(changes: List[UpdateMessage], id: Long): Boolean = changes.exists {
     case u: UpdateFulfillHtlc => id == u.id
     case u: UpdateFailHtlc => id == u.id
@@ -146,11 +137,12 @@ object Common {
   }
 }
 
-/** A minimal commitment for a given funding tx. */
-case class Commitment(localFundingStatus: LocalFundingStatus,
-                      remoteFundingStatus: RemoteFundingStatus,
-                      localCommit: LocalCommit, remoteCommit: RemoteCommit, nextRemoteCommit_opt: Option[RemoteCommit]) {
-  val commitInput: InputInfo = localCommit.commitTxAndRemoteSig.commitTx.input
+case class LocalCommitment(localFundingStatus: LocalFundingStatus, remoteFundingStatus: RemoteFundingStatus,
+                           toLocal: MilliSatoshi, toRemote: MilliSatoshi,
+                           commitTxFeerate: FeeratePerKw,
+                           commitTxAndRemoteSig: CommitTxAndRemoteSig,
+                           htlcTxsAndRemoteSigs: List[HtlcTxAndRemoteSig]) {
+  val commitInput: InputInfo = commitTxAndRemoteSig.commitTx.input
   val fundingTxId: ByteVector32 = commitInput.outPoint.txid
   val capacity: Satoshi = commitInput.txOut.amount
 
@@ -158,30 +150,36 @@ case class Commitment(localFundingStatus: LocalFundingStatus,
   def localChannelReserve(params: ChannelParams): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
     (capacity / 100).max(params.remoteParams.dustLimit)
   } else {
-    params.remoteParams.requestedChannelReserve_opt.get // this is guarded by a require() in ChannelParams
+    params.remoteParams.requestedChannelReserve_opt.get // this is guarded by a require() in Params
   }
 
   /** Channel reserve that applies to our peer's funds. */
   def remoteChannelReserve(params: ChannelParams): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
     (capacity / 100).max(params.localParams.dustLimit)
   } else {
-    params.localParams.requestedChannelReserve_opt.get // this is guarded by a require() in ChannelParams
+    params.localParams.requestedChannelReserve_opt.get // this is guarded by a require() in Params
   }
 
-  /**
-   * Return a fully signed commit tx, that can be published as-is.
-   */
+  /** Return a fully signed commit tx, that can be published as-is. */
   def fullySignedLocalCommitTx(params: ChannelParams, keyManager: ChannelKeyManager): Transactions.CommitTx = {
-    val unsignedCommitTx = localCommit.commitTxAndRemoteSig.commitTx
+    val unsignedCommitTx = commitTxAndRemoteSig.commitTx
     val localSig = keyManager.sign(unsignedCommitTx, keyManager.fundingPublicKey(params.localParams.fundingKeyPath), Transactions.TxOwner.Local, params.commitmentFormat)
-    val remoteSig = localCommit.commitTxAndRemoteSig.remoteSig
+    val remoteSig = commitTxAndRemoteSig.remoteSig
     val commitTx = Transactions.addSigs(unsignedCommitTx, keyManager.fundingPublicKey(params.localParams.fundingKeyPath).publicKey, params.remoteParams.fundingPubKey, localSig, remoteSig)
     // We verify the remote signature when receiving their commit_sig, so this check should always pass.
     require(Transactions.checkSpendable(commitTx).isSuccess, "commit signatures are invalid")
     commitTx
   }
-
 }
+
+case class RemoteCommitment(toLocal: MilliSatoshi, toRemote: MilliSatoshi, commitTxFeerate: FeeratePerKw, txid: ByteVector32)
+
+// @formatter:off
+case class LocalCommitments(index: Long, htlcs: Set[DirectedHtlc], commitments: Seq[LocalCommitment])
+case class RemoteCommitments(index: Long, htlcs: Set[DirectedHtlc], remotePerCommitmentPoint: PublicKey, commitments: Seq[RemoteCommitment])
+case class RemoteNextCommitments(index: Long, htlcs: Set[DirectedHtlc], remoteNextPerCommitmentPoint: PublicKey, commitments: Seq[(CommitSig, RemoteCommitment)])
+case class WaitForRev(sentAfterLocalCommitIndex: Long, remoteNextCommitments: RemoteNextCommitments)
+// @formatter:on
 
 // @formatter:off
 trait AbstractCommitments {
@@ -199,27 +197,52 @@ trait AbstractCommitments {
 // @formatter:on
 
 /**
- * @param commitments           all potentially valid commitments
- * @param remoteChannelData_opt peer backup
+ * This object tracks the state of a channel's finite state machine.
+ * It contains all the data necessary to build on-chain transactions matching the channel's off-chain state.
+ *
+ * @param remoteChannelData_opt optional peer backup.
  */
 case class MetaCommitments(params: ChannelParams,
-                           common: Common,
-                           commitments: List[Commitment],
+                           changes: CommitmentChanges,
+                           localCommitments: LocalCommitments,
+                           remoteCommitments: RemoteCommitments,
+                           // We either:
+                           //  - signed their next commit tx with their next revocation point, which can be discarded
+                           //  - haven't signed their next commit tx and store their next revocation point for when we do
+                           // When we're in the first case, we've send a commit_sig message and are waiting for their revoke_and_ack message.
+                           remoteNextCommitments: Either[WaitForRev, PublicKey],
+                           originChannels: Map[Long, Origin],
+                           remotePerCommitmentSecrets: ShaChain,
                            remoteChannelData_opt: Option[ByteVector] = None) extends AbstractCommitments {
 
   import MetaCommitments._
 
-  require(commitments.nonEmpty, "there must be at least one commitments")
+  require(localCommitments.commitments.nonEmpty, "there must be at least one commitments")
+  require(localCommitments.commitments.length == remoteCommitments.commitments.length, "local/remote commitments count must match")
+  remoteNextCommitments.left.toOption.foreach(waitForRev => require(waitForRev.remoteNextCommitments.commitments.length == localCommitments.commitments.length, "local/next-remote commitments count must match"))
 
   val channelId: ByteVector32 = params.channelId
   val localNodeId: PublicKey = params.localNodeId
   val remoteNodeId: PublicKey = params.remoteNodeId
   val announceChannel: Boolean = params.announceChannel
-  val originChannels: Map[Long, Origin] = common.originChannels
-  // TODO: we use the capacity of the main commitment, is that an issue?
-  val capacity: Satoshi = commitments.head.capacity
+  // TODO: we use the capacity of the main commitment, this probably doesn't belong to AbstractCommitments.
+  val capacity: Satoshi = localCommitments.commitments.head.capacity
+  val commitmentsCount: Int = localCommitments.commitments.length
 
-  val all: List[Commitments] = commitments.map(Commitments(params, common, _))
+  val all: List[Commitments] = (0 until commitmentsCount).map(i => {
+    Commitments(params, changes,
+      localCommitIndex = localCommitments.index, remoteCommitIndex = remoteCommitments.index,
+      localHtlcs = localCommitments.htlcs, remoteHtlcs = remoteCommitments.htlcs,
+      localCommitment = localCommitments.commitments(i), remoteCommitment = remoteCommitments.commitments(i),
+      remotePerCommitmentPoint = remoteCommitments.remotePerCommitmentPoint,
+      remoteNextCommitInfo = remoteNextCommitments match {
+        case Left(waitForRev) =>
+          val (commitSig, nextRemoteCommitment) = waitForRev.remoteNextCommitments.commitments(i)
+          Left(waitForRev.sentAfterLocalCommitIndex, commitSig, waitForRev.remoteNextCommitments.htlcs, nextRemoteCommitment, waitForRev.remoteNextCommitments.remoteNextPerCommitmentPoint)
+        case Right(perCommitmentPoint) => Right(perCommitmentPoint)
+      },
+      originChannels, remotePerCommitmentSecrets)
+  }).toList
 
   /** current valid commitments, according to our view of the blockchain */
   val main: Commitments = all.head
