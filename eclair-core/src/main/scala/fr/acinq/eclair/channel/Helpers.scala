@@ -407,7 +407,7 @@ object Helpers {
      * @return (localSpec, localTx, remoteSpec, remoteTx, fundingTxOutput)
      */
     def makeFirstCommitTxs(keyManager: ChannelKeyManager,
-                           params: Params,
+                           params: ChannelParams,
                            localFundingAmount: Satoshi, remoteFundingAmount: Satoshi,
                            localPushAmount: MilliSatoshi, remotePushAmount: MilliSatoshi,
                            commitTxFeerate: FeeratePerKw,
@@ -425,7 +425,7 @@ object Helpers {
      * local/remote balances are provided.
      */
     def makeCommitTxsWithoutHtlcs(keyManager: ChannelKeyManager,
-                                  params: Params,
+                                  params: ChannelParams,
                                   fundingAmount: Satoshi,
                                   toLocal: MilliSatoshi, toRemote: MilliSatoshi,
                                   commitTxFeerate: FeeratePerKw,
@@ -479,7 +479,7 @@ object Helpers {
     /**
      * Check whether we are in sync with our peer.
      */
-    def checkSync(keyManager: ChannelKeyManager, params: Params, common: Common, remoteChannelReestablish: ChannelReestablish): SyncResult = {
+    def checkSync(keyManager: ChannelKeyManager, params: ChannelParams, common: Common, remoteChannelReestablish: ChannelReestablish): SyncResult = {
 
       // This is done in two steps:
       // - step 1: we check our local commitment

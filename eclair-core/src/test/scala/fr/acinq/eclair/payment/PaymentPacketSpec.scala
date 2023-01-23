@@ -709,7 +709,7 @@ object PaymentPacketSpec {
     val remoteChanges = RemoteChanges(Nil, Nil, Nil)
     val channelFlags = ChannelFlags.Private
     new MetaCommitments(
-      Params(channelId, ChannelConfig.standard, channelFeatures, localParams, remoteParams, channelFlags),
+      ChannelParams(channelId, ChannelConfig.standard, channelFeatures, localParams, remoteParams, channelFlags),
       Common(localChanges, remoteChanges, 0, 0, 0, 0, Map.empty, Right(randomKey().publicKey), ShaChain.init),
       List(Commitment(LocalFundingStatus.UnknownFundingTx, RemoteFundingStatus.Locked, localCommit, remoteCommit, None))
     ) {

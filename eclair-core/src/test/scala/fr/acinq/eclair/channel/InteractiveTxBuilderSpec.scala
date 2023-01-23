@@ -66,26 +66,26 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
     TxAddInput(channelId, serialId, previousTx, 1, 0)
   }
 
-  case class ChannelParams(fundingParamsA: InteractiveTxParams,
-                           nodeParamsA: NodeParams,
-                           localParamsA: LocalParams,
-                           remoteParamsA: RemoteParams,
-                           firstPerCommitmentPointA: PublicKey,
-                           secondPerCommitmentPointA: PublicKey,
-                           fundingParamsB: InteractiveTxParams,
-                           nodeParamsB: NodeParams,
-                           localParamsB: LocalParams,
-                           remoteParamsB: RemoteParams,
-                           firstPerCommitmentPointB: PublicKey,
-                           secondPerCommitmentPointB: PublicKey,
-                           channelFeatures: ChannelFeatures) {
+  case class ChannelFundingParams(fundingParamsA: InteractiveTxParams,
+                                  nodeParamsA: NodeParams,
+                                  localParamsA: LocalParams,
+                                  remoteParamsA: RemoteParams,
+                                  firstPerCommitmentPointA: PublicKey,
+                                  secondPerCommitmentPointA: PublicKey,
+                                  fundingParamsB: InteractiveTxParams,
+                                  nodeParamsB: NodeParams,
+                                  localParamsB: LocalParams,
+                                  remoteParamsB: RemoteParams,
+                                  firstPerCommitmentPointB: PublicKey,
+                                  secondPerCommitmentPointB: PublicKey,
+                                  channelFeatures: ChannelFeatures) {
     val channelId = fundingParamsA.channelId
 
     def spawnTxBuilderAlice(fundingParams: InteractiveTxParams, commitFeerate: FeeratePerKw, wallet: OnChainWallet): ActorRef[InteractiveTxBuilder.Command] = system.spawnAnonymous(InteractiveTxBuilder(
       nodeParamsB.nodeId,
       nodeParamsA, fundingParams,
       0 msat, 0 msat,
-      Params(fundingParams.channelId, ChannelConfig.standard, channelFeatures, localParamsA, remoteParamsB, ChannelFlags.Public),
+      ChannelParams(fundingParams.channelId, ChannelConfig.standard, channelFeatures, localParamsA, remoteParamsB, ChannelFlags.Public),
       commitFeerate, firstPerCommitmentPointB, secondPerCommitmentPointB,
       wallet))
 
@@ -93,12 +93,12 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
       nodeParamsA.nodeId,
       nodeParamsB, fundingParams,
       0 msat, 0 msat,
-      Params(fundingParams.channelId, ChannelConfig.standard, channelFeatures, localParamsB, remoteParamsA, ChannelFlags.Public),
+      ChannelParams(fundingParams.channelId, ChannelConfig.standard, channelFeatures, localParamsB, remoteParamsA, ChannelFlags.Public),
       commitFeerate, firstPerCommitmentPointA, secondPerCommitmentPointA,
       wallet))
   }
 
-  private def createChannelParams(fundingAmountA: Satoshi, fundingAmountB: Satoshi, targetFeerate: FeeratePerKw, dustLimit: Satoshi, lockTime: Long, requireConfirmedInputs: RequireConfirmedInputs = RequireConfirmedInputs(forLocal = false, forRemote = false)): ChannelParams = {
+  private def createChannelParams(fundingAmountA: Satoshi, fundingAmountB: Satoshi, targetFeerate: FeeratePerKw, dustLimit: Satoshi, lockTime: Long, requireConfirmedInputs: RequireConfirmedInputs = RequireConfirmedInputs(forLocal = false, forRemote = false)): ChannelFundingParams = {
     val channelFeatures = ChannelFeatures(ChannelTypes.AnchorOutputsZeroFeeHtlcTx(), Features[InitFeature](Features.DualFunding -> FeatureSupport.Optional), Features[InitFeature](Features.DualFunding -> FeatureSupport.Optional), announceChannel = true)
     val Seq(nodeParamsA, nodeParamsB) = Seq(TestConstants.Alice.nodeParams, TestConstants.Bob.nodeParams).map(_.copy(features = Features(channelFeatures.features.map(f => f -> FeatureSupport.Optional).toMap[Feature, FeatureSupport])))
     val localParamsA = Peer.makeChannelParams(nodeParamsA, nodeParamsA.features.initFeatures(), ByteVector.empty, None, isInitiator = true, dualFunded = true, fundingAmountA, unlimitedMaxHtlcValueInFlight = false)
@@ -128,7 +128,7 @@ class InteractiveTxBuilderSpec extends TestKitBaseClass with AnyFunSuiteLike wit
     val fundingScript = Script.write(Script.pay2wsh(Scripts.multiSig2of2(remoteParamsA.fundingPubKey, remoteParamsB.fundingPubKey)))
     val fundingParamsA = InteractiveTxParams(channelId, isInitiator = true, fundingAmountA, fundingAmountB, fundingScript, lockTime, dustLimit, targetFeerate, requireConfirmedInputs)
     val fundingParamsB = InteractiveTxParams(channelId, isInitiator = false, fundingAmountB, fundingAmountA, fundingScript, lockTime, dustLimit, targetFeerate, requireConfirmedInputs)
-    ChannelParams(fundingParamsA, nodeParamsA, localParamsA, remoteParamsA, firstPerCommitmentPointA, secondPerCommitmentPointA, fundingParamsB, nodeParamsB, localParamsB, remoteParamsB, firstPerCommitmentPointB, secondPerCommitmentPointB, channelFeatures)
+    ChannelFundingParams(fundingParamsA, nodeParamsA, localParamsA, remoteParamsA, firstPerCommitmentPointA, secondPerCommitmentPointA, fundingParamsB, nodeParamsB, localParamsB, remoteParamsB, firstPerCommitmentPointB, secondPerCommitmentPointB, channelFeatures)
   }
 
   case class Fixture(alice: ActorRef[InteractiveTxBuilder.Command],

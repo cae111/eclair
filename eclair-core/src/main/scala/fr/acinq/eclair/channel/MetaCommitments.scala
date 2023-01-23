@@ -19,11 +19,11 @@ import fr.acinq.eclair.{BlockHeight, CltvExpiry, CltvExpiryDelta, Features, Mill
 import scodec.bits.ByteVector
 
 /** Static parameters shared by all commitments. */
-case class Params(channelId: ByteVector32,
-                  channelConfig: ChannelConfig,
-                  channelFeatures: ChannelFeatures,
-                  localParams: LocalParams, remoteParams: RemoteParams,
-                  channelFlags: ChannelFlags) {
+case class ChannelParams(channelId: ByteVector32,
+                         channelConfig: ChannelConfig,
+                         channelFeatures: ChannelFeatures,
+                         localParams: LocalParams, remoteParams: RemoteParams,
+                         channelFlags: ChannelFlags) {
 
   require(channelFeatures.paysDirectlyToWallet == localParams.walletStaticPaymentBasepoint.isDefined, s"localParams.walletStaticPaymentBasepoint must be defined only for commitments that pay directly to our wallet (channel features: $channelFeatures")
   require(channelFeatures.hasFeature(Features.DualFunding) == localParams.requestedChannelReserve_opt.isEmpty, "custom local channel reserve is incompatible with dual-funded channels")
@@ -42,7 +42,7 @@ case class Params(channelId: ByteVector32,
   /**
    * We update local/global features at reconnection
    */
-  def updateFeatures(localInit: Init, remoteInit: Init): Params = copy(
+  def updateFeatures(localInit: Init, remoteInit: Init): ChannelParams = copy(
     localParams = localParams.copy(initFeatures = localInit.features),
     remoteParams = remoteParams.copy(initFeatures = remoteInit.features)
   )
@@ -155,23 +155,23 @@ case class Commitment(localFundingStatus: LocalFundingStatus,
   val capacity: Satoshi = commitInput.txOut.amount
 
   /** Channel reserve that applies to our funds. */
-  def localChannelReserve(params: Params): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
+  def localChannelReserve(params: ChannelParams): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
     (capacity / 100).max(params.remoteParams.dustLimit)
   } else {
-    params.remoteParams.requestedChannelReserve_opt.get // this is guarded by a require() in Params
+    params.remoteParams.requestedChannelReserve_opt.get // this is guarded by a require() in ChannelParams
   }
 
   /** Channel reserve that applies to our peer's funds. */
-  def remoteChannelReserve(params: Params): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
+  def remoteChannelReserve(params: ChannelParams): Satoshi = if (params.channelFeatures.hasFeature(Features.DualFunding)) {
     (capacity / 100).max(params.localParams.dustLimit)
   } else {
-    params.localParams.requestedChannelReserve_opt.get // this is guarded by a require() in Params
+    params.localParams.requestedChannelReserve_opt.get // this is guarded by a require() in ChannelParams
   }
 
   /**
    * Return a fully signed commit tx, that can be published as-is.
    */
-  def fullySignedLocalCommitTx(params: Params, keyManager: ChannelKeyManager): Transactions.CommitTx = {
+  def fullySignedLocalCommitTx(params: ChannelParams, keyManager: ChannelKeyManager): Transactions.CommitTx = {
     val unsignedCommitTx = localCommit.commitTxAndRemoteSig.commitTx
     val localSig = keyManager.sign(unsignedCommitTx, keyManager.fundingPublicKey(params.localParams.fundingKeyPath), Transactions.TxOwner.Local, params.commitmentFormat)
     val remoteSig = localCommit.commitTxAndRemoteSig.remoteSig
@@ -202,7 +202,7 @@ trait AbstractCommitments {
  * @param commitments           all potentially valid commitments
  * @param remoteChannelData_opt peer backup
  */
-case class MetaCommitments(params: Params,
+case class MetaCommitments(params: ChannelParams,
                            common: Common,
                            commitments: List[Commitment],
                            remoteChannelData_opt: Option[ByteVector] = None) extends AbstractCommitments {
