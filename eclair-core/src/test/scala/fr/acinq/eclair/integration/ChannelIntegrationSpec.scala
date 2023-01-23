@@ -657,7 +657,7 @@ abstract class AnchorChannelIntegrationSpec extends ChannelIntegrationSpec {
         val stateEvent = eventListener.expectMsgType[ChannelStateChanged](max = 60 seconds)
         if (stateEvent.currentState == NORMAL) {
           assert(stateEvent.commitments_opt.nonEmpty)
-          assert(stateEvent.commitments_opt.get.asInstanceOf[Commitments].channelType == expectedChannelType)
+          assert(stateEvent.commitments_opt.get.asInstanceOf[MetaCommitments].params.channelType == expectedChannelType)
           count = count + 1
         }
       }

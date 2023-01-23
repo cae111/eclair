@@ -338,9 +338,9 @@ trait ChannelStateTestsBase extends Assertions with Eventually {
     eventually(assert(alice.stateName == NORMAL))
     eventually(assert(bob.stateName == NORMAL))
 
-    val aliceCommitments = alice.stateData.asInstanceOf[DATA_NORMAL].commitments
-    val bobCommitments = bob.stateData.asInstanceOf[DATA_NORMAL].commitments
-    val expectedBalanceBob = (nonInitiatorFundingAmount.getOrElse(0 sat) + initiatorPushAmount.getOrElse(0 msat) - nonInitiatorPushAmount.getOrElse(0 msat) - aliceCommitments.remoteChannelReserve).max(0 msat)
+    val aliceCommitments = alice.stateData.asInstanceOf[DATA_NORMAL].metaCommitments
+    val bobCommitments = bob.stateData.asInstanceOf[DATA_NORMAL].metaCommitments
+    val expectedBalanceBob = (nonInitiatorFundingAmount.getOrElse(0 sat) + initiatorPushAmount.getOrElse(0 msat) - nonInitiatorPushAmount.getOrElse(0 msat) - aliceCommitments.commitments.head.remoteChannelReserve(aliceCommitments.params)).max(0 msat)
     assert(bobCommitments.availableBalanceForSend == expectedBalanceBob)
     // x2 because alice and bob share the same relayer
     channelUpdateListener.expectMsgType[LocalChannelUpdate]

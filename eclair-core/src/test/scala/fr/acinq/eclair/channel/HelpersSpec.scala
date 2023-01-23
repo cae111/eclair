@@ -255,7 +255,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // only mutual close
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = tx1 :: tx2 :: tx3 :: Nil,
         mutualClosePublished = tx2 :: tx3 :: Nil,
@@ -269,7 +269,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // mutual + local close, but local commit tx isn't confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
@@ -290,7 +290,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // mutual + local close, local commit tx confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
@@ -311,7 +311,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // local close + remote close, none is confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
@@ -338,7 +338,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // mutual + local + remote close, remote commit tx confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
@@ -365,7 +365,10 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // mutual + local + remote + next remote close, next remote commit tx confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments.copy(remoteNextCommitInfo = Left(WaitingForRevocation(commitments.remoteCommit, null, 7L)))),
+        metaCommitments = commitments.copy(
+          common = commitments.common.copy(remoteNextCommitInfo = Left(WaitForRev(null, 7L))),
+          commitments = commitments.commitments.head.copy(nextRemoteCommit_opt = Some(commitments.commitments.head.remoteCommit)) :: Nil,
+        ),
         waitingSince = BlockHeight(0),
         mutualCloseProposed = tx1 :: Nil,
         mutualClosePublished = tx1 :: Nil,
@@ -398,7 +401,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // future remote close, not confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
@@ -418,7 +421,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // future remote close, confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
@@ -438,7 +441,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // local close + revoked close, none confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,
@@ -484,7 +487,7 @@ class HelpersSpec extends TestKitBaseClass with AnyFunSuiteLike with ChannelStat
     // local close + revoked close, one revoked confirmed
     assert(Closing.isClosingTypeAlreadyKnown(
       DATA_CLOSING(
-        metaCommitments = MetaCommitments(commitments),
+        metaCommitments = commitments,
         waitingSince = BlockHeight(0),
         mutualCloseProposed = Nil,
         mutualClosePublished = Nil,

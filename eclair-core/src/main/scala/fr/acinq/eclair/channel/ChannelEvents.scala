@@ -59,7 +59,7 @@ case class LocalChannelUpdate(channel: ActorRef, channelId: ByteVector32, shortI
    */
   def scidsForRouting: Seq[ShortChannelId] = {
     val canUseRealScid = commitments match {
-      case c: Commitments => !c.channelFeatures.hasFeature(Features.ScidAlias)
+      case c: MetaCommitments => !c.params.channelFeatures.hasFeature(Features.ScidAlias)
       case _ => false
     }
     if (canUseRealScid) {
