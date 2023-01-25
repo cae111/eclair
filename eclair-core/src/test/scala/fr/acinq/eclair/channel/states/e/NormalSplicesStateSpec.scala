@@ -141,7 +141,7 @@ class NormalSplicesStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLik
     assert(alice.stateData.asInstanceOf[DATA_NORMAL].metaCommitments.latest.remoteCommit.spec.toLocal == 700_000_000.msat)
   }
 
-  test("recv WatchFundingConfirmedTriggered with splice in progress", Tag(NoMaxHtlcValueInFlight)) { f =>
+  test("recv WatchFundingConfirmedTriggered on splice tx", Tag(NoMaxHtlcValueInFlight)) { f =>
     import f._
 
     val sender = TestProbe()
@@ -176,13 +176,56 @@ class NormalSplicesStateSpec extends TestKitBaseClass with FixtureAnyFunSuiteLik
     bob2alice.forward(alice)
   }
 
-  test("recv CMD_ADD_HTLC with splice in progress") { f =>
+  test("recv CMD_ADD_HTLC with multiple commitments") { f =>
     import f._
     initiateSplice(f, spliceIn_opt = Some(SpliceIn(500_000 sat, pushAmount = 0 msat)))
     val sender = TestProbe()
     alice ! CMD_ADD_HTLC(sender.ref, 500000 msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, None, localOrigin(sender.ref))
     sender.expectMsgType[RES_SUCCESS[CMD_ADD_HTLC]]
     alice2bob.expectMsgType[UpdateAddHtlc]
+  }
+
+  test("recv CMD_ADD_HTLC while a splice is requested") { f =>
+    import f._
+    val sender = TestProbe()
+    val cmd = CMD_SPLICE(sender.ref, spliceIn_opt = Some(SpliceIn(500_000 sat, pushAmount = 0 msat)), spliceOut_opt = None)
+    alice ! cmd
+    alice2bob.expectMsgType[SpliceInit]
+    alice ! CMD_ADD_HTLC(sender.ref, 500000 msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, None, localOrigin(sender.ref))
+    sender.expectMsgType[RES_ADD_FAILED[_]]
+    alice2bob.expectNoMessage()
+  }
+
+  test("recv CMD_ADD_HTLC while a splice is in progress") { f =>
+    import f._
+    val sender = TestProbe()
+    val cmd = CMD_SPLICE(sender.ref, spliceIn_opt = Some(SpliceIn(500_000 sat, pushAmount = 0 msat)), spliceOut_opt = None)
+    alice ! cmd
+    alice2bob.expectMsgType[SpliceInit]
+    alice2bob.forward(bob)
+    bob2alice.expectMsgType[SpliceAck]
+    bob2alice.forward(alice)
+    sender.expectMsgType[RES_SUCCESS[CMD_SPLICE]]
+    alice2bob.expectMsgType[TxAddInput]
+    alice ! CMD_ADD_HTLC(sender.ref, 500000 msat, randomBytes32(), CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), TestConstants.emptyOnionPacket, None, localOrigin(sender.ref))
+    sender.expectMsgType[RES_ADD_FAILED[_]]
+    alice2bob.expectNoMessage()
+  }
+
+  test("recv UpdateAddHtlc while a splice is in progress") { f =>
+    import f._
+    val sender = TestProbe()
+    val cmd = CMD_SPLICE(sender.ref, spliceIn_opt = Some(SpliceIn(500_000 sat, pushAmount = 0 msat)), spliceOut_opt = None)
+    alice ! cmd
+    alice2bob.expectMsgType[SpliceInit]
+    alice2bob.forward(bob)
+    bob2alice.expectMsgType[SpliceAck]
+    bob2alice.forward(alice)
+    sender.expectMsgType[RES_SUCCESS[CMD_SPLICE]]
+
+    val fakeHtlc = UpdateAddHtlc(channelId = randomBytes32(), id = 5656, amountMsat = 50000000 msat, cltvExpiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight), paymentHash = randomBytes32(), onionRoutingPacket = TestConstants.emptyOnionPacket, blinding_opt = None)
+    bob2alice.forward(alice, fakeHtlc)
+    alice2bob.expectMsgType[Error]
   }
 
 }
