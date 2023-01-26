@@ -726,7 +726,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
       val replyTo = if (cmd.replyTo == ActorRef.noSender) sender() else cmd.replyTo
       d.spliceStatus match {
         case SpliceStatus.NoSplice =>
-          if (d.metaCommitments.hasNoPendingHtlcsOrFeeUpdate && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
+          if (d.metaCommitments.isIdle && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
             log.info(s"initiating splice with local.in.amount=${cmd.additionalLocalFunding} local.in.push=${cmd.pushAmount} out.amount=${cmd.spliceOut_opt.map(_.amount).sum}")
             val spliceInit = SpliceInit(d.channelId,
               lockTime = nodeParams.currentBlockHeight.toLong,
@@ -742,14 +742,14 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
           }
         case _ =>
           log.warning("cannot initiate splice, another one is already in progress")
-          replyTo ! Status.Failure(InvalidRbfAlreadyInProgress(d.channelId))
+          replyTo ! Status.Failure(InvalidSpliceAlreadyInProgress(d.channelId))
           stay()
       }
 
     case Event(msg: SpliceInit, d: DATA_NORMAL) =>
       d.spliceStatus match {
         case SpliceStatus.NoSplice =>
-          if (d.metaCommitments.hasNoPendingHtlcsOrFeeUpdate && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
+          if (d.metaCommitments.isIdle && d.metaCommitments.params.channelFeatures.hasFeature(DualFunding)) {
             log.info(s"accepting splice with remote.in.amount=${msg.fundingContribution} remote.in.push=${msg.pushAmount}")
             val spliceAck = SpliceAck(d.channelId, fundingContribution = 0.sat, pushAmount = 0.msat, spliceOut_opt = None) // only remote contributes to the splice
             val parentCommitments = d.metaCommitments.latest
@@ -777,12 +777,15 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
             txBuilder ! InteractiveTxBuilder.Start(self)
             stay() using d.copy(spliceStatus = SpliceStatus.SpliceInProgress(txBuilder)) sending spliceAck
           } else {
-            log.info("rejecting splice request")
-            stay()
+            log.info("rejecting splice request, channel not idle or not compatible")
+            stay() using d.copy(spliceStatus = SpliceStatus.SpliceAborted) sending TxAbort(d.channelId, InvalidSpliceRequest(d.channelId).getMessage)
           }
-        case _ =>
-          log.warning("cannot initiate splice, another one is already in progress")
-          stay() sending TxAbort(d.channelId, InvalidRbfAlreadyInProgress(d.channelId).getMessage)
+        case SpliceStatus.SpliceAborted =>
+          log.info("rejecting splice attempt: our previous tx_abort was not acked")
+          stay() sending Warning(d.channelId, InvalidSpliceTxAbortNotAcked(d.channelId).getMessage)
+        case _: SpliceStatus.SpliceRequested | _: SpliceStatus.SpliceInProgress =>
+          log.info("rejecting splice attempt: the current splice attempt must be completed or aborted first")
+          stay() sending Warning(d.channelId, InvalidSpliceAlreadyInProgress(d.channelId).getMessage)
       }
 
     case Event(msg: SpliceAck, d: DATA_NORMAL) =>
@@ -815,7 +818,7 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
           txBuilder ! InteractiveTxBuilder.Start(self)
           stay() using d.copy(spliceStatus = SpliceStatus.SpliceInProgress(txBuilder))
         case _ =>
-          log.info("ignoring unexpected tx_ack_rbf")
+          log.info("ignoring unexpected splice_ack")
           stay() sending Warning(d.channelId, UnexpectedInteractiveTxMessage(d.channelId, msg).getMessage)
       }
 
@@ -834,8 +837,27 @@ class Channel(val nodeParams: NodeParams, val wallet: OnChainChannelFunder with 
         }
       case f: InteractiveTxBuilder.Failed =>
         log.info("splice attempt failed: {}", f.cause.getMessage)
-        stay() using d.copy(spliceStatus = SpliceStatus.NoSplice) sending TxAbort(d.channelId, f.cause.getMessage)
+        stay() using d.copy(spliceStatus = SpliceStatus.SpliceAborted) sending TxAbort(d.channelId, f.cause.getMessage)
     }
+
+    case Event(msg: TxAbort, d: DATA_NORMAL) =>
+      d.spliceStatus match {
+        case SpliceStatus.SpliceInProgress(txBuilder) =>
+          log.info("our peer aborted the splice attempt: ascii='{}' bin={}", msg.toAscii, msg.data)
+          txBuilder ! InteractiveTxBuilder.Abort
+          stay() using d.copy(spliceStatus = SpliceStatus.NoSplice) sending TxAbort(d.channelId, SpliceAttemptAborted(d.channelId).getMessage)
+        case SpliceStatus.SpliceRequested(cmd, _) =>
+          log.info("our peer rejected our splice attempt: ascii='{}' bin={}", msg.toAscii, msg.data)
+          cmd.replyTo ! Status.Failure(new RuntimeException(s"splice attempt rejected by our peer: ${msg.toAscii}"))
+          stay() using d.copy(spliceStatus = SpliceStatus.NoSplice) sending TxAbort(d.channelId, SpliceAttemptAborted(d.channelId).getMessage)
+        case SpliceStatus.SpliceAborted =>
+          log.debug("our peer acked our previous tx_abort")
+          stay() using d.copy(spliceStatus = SpliceStatus.NoSplice)
+        case SpliceStatus.NoSplice =>
+          log.info("our peer wants to abort the dual funding flow, but we've already negotiated a funding transaction: ascii='{}' bin={}", msg.toAscii, msg.data)
+          // We ack their tx_abort but we keep monitoring the funding transaction until it's confirmed or double-spent.
+          stay() sending TxAbort(d.channelId, DualFundingAborted(d.channelId).getMessage)
+      }
 
     case Event(msg: InteractiveTxMessage, d: DATA_NORMAL) =>
       (d.spliceStatus, msg) match {

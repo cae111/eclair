@@ -452,6 +452,7 @@ object SpliceStatus {
   case object NoSplice extends SpliceStatus
   case class SpliceRequested(cmd: CMD_SPLICE, init: SpliceInit) extends SpliceStatus
   case class SpliceInProgress(splice: typed.ActorRef[InteractiveTxBuilder.Command]) extends SpliceStatus
+  case object SpliceAborted extends SpliceStatus
 }
 
 sealed trait ChannelData extends PossiblyHarmful {

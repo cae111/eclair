@@ -247,6 +247,10 @@ case class Commitment(localFundingStatus: LocalFundingStatus,
 
   def hasNoPendingHtlcs: Boolean = localCommit.spec.htlcs.isEmpty && remoteCommit.spec.htlcs.isEmpty && nextRemoteCommit_opt.isEmpty
 
+  def isIdle(common: Common): Boolean =
+      localCommit.spec.htlcs.isEmpty && remoteCommit.spec.htlcs.isEmpty && nextRemoteCommit_opt.isEmpty &&
+        common.localChanges.all.isEmpty && common.remoteChanges.all.isEmpty
+
   def hasNoPendingHtlcsOrFeeUpdate(common: Common): Boolean =
     nextRemoteCommit_opt.isEmpty &&
       localCommit.spec.htlcs.isEmpty &&
@@ -407,6 +411,8 @@ case class MetaCommitments(params: Params,
   def hasNoPendingHtlcs: Boolean = commitments.head.hasNoPendingHtlcs
 
   def hasNoPendingHtlcsOrFeeUpdate: Boolean = commitments.head.hasNoPendingHtlcsOrFeeUpdate(common)
+
+  def isIdle: Boolean = commitments.head.isIdle(common)
 
   def hasPendingOrProposedHtlcs: Boolean = commitments.head.hasPendingOrProposedHtlcs(common)
 
